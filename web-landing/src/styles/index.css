@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    @apply bg-slate-50 text-brand-dark font-sans transition-colors duration-300;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .dark body {
+    @apply bg-brand-darker text-brand-light;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-slate-200 dark:bg-brand-dark; }
+  ::-webkit-scrollbar-thumb { @apply bg-brand-blue rounded-full; }
+}
+
+@layer components {
+  /* Buttons */
+  .btn-primary {
+    @apply bg-brand-gradient text-white font-semibold px-6 py-3 rounded-xl
+           hover:opacity-90 active:scale-95 transition-all duration-150 cursor-pointer
+           shadow-lg shadow-brand-blue/25 inline-flex items-center justify-center gap-2;
+  }
+  .btn-secondary {
+    @apply bg-white dark:bg-white/10 text-brand-dark dark:text-white font-semibold px-6 py-3 rounded-xl
+           border border-slate-200 dark:border-white/10
+           hover:bg-slate-100 dark:hover:bg-white/20 active:scale-95
+           transition-all duration-150 cursor-pointer inline-flex items-center justify-center gap-2;
+  }
+  .btn-outline {
+    @apply border-2 border-brand-blue text-brand-blue font-semibold px-6 py-3 rounded-xl
+           hover:bg-brand-blue hover:text-white active:scale-95
+           transition-all duration-150 cursor-pointer inline-flex items-center justify-center gap-2;
+  }
+
+  /* Inputs */
+  .input {
+    @apply w-full bg-white dark:bg-brand-dark border border-slate-200 dark:border-white/10
+           rounded-xl px-4 py-3 text-brand-dark dark:text-white
+           placeholder-slate-400 dark:placeholder-white/30
+           focus:outline-none focus:ring-2 focus:ring-brand-blue/40 focus:border-brand-blue
+           transition-all duration-200;
+  }
+
+  /* Cards */
+  .card {
+    @apply bg-white dark:bg-brand-card rounded-2xl border border-slate-100 dark:border-white/5
+           shadow-sm dark:shadow-none;
+  }
+
+  /* Section container */
+  .section {
+    @apply max-w-6xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-brand-gradient bg-clip-text text-transparent;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold
+           bg-brand-blue/10 text-brand-blue dark:bg-brand-blue/20;
+  }
+}

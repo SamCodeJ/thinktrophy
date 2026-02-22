@@ -1,0 +1,96 @@
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+
+// For development without RSA keys, fall back to HS256 with a symmetric secret.
+// In production, set JWT_PRIVATE_KEY and JWT_PUBLIC_KEY (base64-encoded RSA-2048 PEM).
+
+const isDev = process.env.NODE_ENV !== 'production';
+
+function getPrivateKey() {
+  if (process.env.JWT_PRIVATE_KEY && process.env.JWT_PRIVATE_KEY !== 'REPLACE_WITH_BASE64_ENCODED_RSA_PRIVATE_KEY') {
+    return Buffer.from(process.env.JWT_PRIVATE_KEY, 'base64').toString('utf8');
+  }
+  if (isDev) return process.env.JWT_REFRESH_SECRET || 'dev-secret-change-me';
+  throw new Error('JWT_PRIVATE_KEY is not configured');
+}
+
+function getPublicKey() {
+  if (process.env.JWT_PUBLIC_KEY && process.env.JWT_PUBLIC_KEY !== 'REPLACE_WITH_BASE64_ENCODED_RSA_PUBLIC_KEY') {
+    return Buffer.from(process.env.JWT_PUBLIC_KEY, 'base64').toString('utf8');
+  }
+  if (isDev) return process.env.JWT_REFRESH_SECRET || 'dev-secret-change-me';
+  throw new Error('JWT_PUBLIC_KEY is not configured');
+}
+
+function getAlgorithm() {
+  const hasRsaKey =
+    process.env.JWT_PRIVATE_KEY &&
+    process.env.JWT_PRIVATE_KEY !== 'REPLACE_WITH_BASE64_ENCODED_RSA_PRIVATE_KEY';
+  return hasRsaKey ? 'RS256' : 'HS256';
+}
+
+// ─── Access token (15min) ───────────────────────────────────────────────────
+function signAccessToken(payload) {
+  const algo = getAlgorithm();
+  const key  = getPrivateKey();
+  return jwt.sign(payload, key, {
+    algorithm: algo,
+    expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m',
+    issuer: 'thinktrophy',
+  });
+}
+
+function verifyAccessToken(token) {
+  const algo = getAlgorithm();
+  const key  = getPublicKey();
+  return jwt.verify(token, key, { algorithms: [algo], issuer: 'thinktrophy' });
+}
+
+// ─── Refresh token (7d) ─────────────────────────────────────────────────────
+function signRefreshToken(payload) {
+  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret', {
+    expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d',
+    issuer: 'thinktrophy',
+  });
+}
+
+function verifyRefreshToken(token) {
+  return jwt.verify(token, process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret', {
+    issuer: 'thinktrophy',
+  });
+}
+
+// ─── Game session token (110 seconds = 100s game + 10s grace) ──────────────
+function signSessionToken(payload) {
+  const algo    = getAlgorithm();
+  const key     = getPrivateKey();
+  const expiry  = parseInt(process.env.GAME_SESSION_EXPIRY_SECONDS || '110', 10);
+  return jwt.sign(payload, key, {
+    algorithm: algo,
+    expiresIn: expiry,
+    issuer: 'thinktrophy',
+  });
+}
+
+function verifySessionToken(token) {
+  const algo = getAlgorithm();
+  const key  = getPublicKey();
+  return jwt.verify(token, key, { algorithms: [algo], issuer: 'thinktrophy' });
+}
+
+// ─── Admin access token (1h) ────────────────────────────────────────────────
+function signAdminToken(payload) {
+  const algo = getAlgorithm();
+  const key  = getPrivateKey();
+  return jwt.sign(payload, key, { algorithm: algo, expiresIn: '1h', issuer: 'thinktrophy' });
+}
+
+module.exports = {
+  signAccessToken,
+  verifyAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+  signSessionToken,
+  verifySessionToken,
+  signAdminToken,
+};
