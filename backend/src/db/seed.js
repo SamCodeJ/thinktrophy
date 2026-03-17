@@ -171,8 +171,8 @@ async function seed() {
 
     // ── Platform settings
     const defaults = [
-      ['min_stake',       '1.00'],
-      ['max_stake',       '1000.00'],
+      ['min_stake',       '500.00'],
+      ['max_stake',       '5000.00'],
       ['payout_perfect',  '2.0'],
       ['payout_nine',     '1.5'],
       ['platform_name',   'ThinkTrophy'],

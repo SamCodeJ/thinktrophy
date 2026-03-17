@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Animated,
   BackHandler, Alert, Dimensions, AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import * as ScreenCapture from 'expo-screen-capture';
 import { submitAnswer, abandonSession } from '../api';
 import { colors } from '../utils/theme';
 import { useKiosk } from '../store/kioskStore';
@@ -91,6 +93,16 @@ export default function GameScreen({ navigation, route }) {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
     return () => sub.remove();
   }, []);
+
+  // Block screenshots while this screen is focused
+  // useFocusEffect(
+  //   useCallback(() => {
+  //     ScreenCapture.preventScreenCaptureAsync();
+  //     return () => {
+  //       ScreenCapture.allowScreenCaptureAsync();
+  //     };
+  //   }, [])
+  // );
 
   // Kiosk: monitor app backgrounding
   useEffect(() => {
@@ -234,6 +246,11 @@ export default function GameScreen({ navigation, route }) {
 
         {/* Question */}
         <Animated.View style={[styles.questionArea, { transform: [{ translateX: slideAnim }] }]}>
+          {question?.category_name && (
+            <View style={styles.categoryBadge}>
+              <Text style={styles.categoryText}>{question.category_name}</Text>
+            </View>
+          )}
           <Text style={styles.questionText}>{question?.question_text}</Text>
         </Animated.View>
 
@@ -269,6 +286,13 @@ const styles = StyleSheet.create({
   progressBar: { height: 4, backgroundColor: 'rgba(255,255,255,0.1)', marginHorizontal: 20, borderRadius: 2, overflow: 'hidden' },
   progressFill: { height: 4, borderRadius: 2 },
   questionArea: { flex: 1, paddingHorizontal: 24, paddingTop: 24, justifyContent: 'center' },
+  categoryBadge: {
+    alignSelf: 'flex-start', marginBottom: 14,
+    backgroundColor: 'rgba(0,206,201,0.15)', borderWidth: 1,
+    borderColor: 'rgba(0,206,201,0.35)', borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 5,
+  },
+  categoryText: { fontSize: 12, fontWeight: '700', color: colors.teal, letterSpacing: 0.5, textTransform: 'uppercase' },
   questionText: { fontSize: 22, fontWeight: '700', color: colors.light, lineHeight: 32 },
   options: { padding: 20, gap: 10 },
   optionBtn: {

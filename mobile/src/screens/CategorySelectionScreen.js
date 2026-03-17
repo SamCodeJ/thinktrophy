@@ -17,6 +17,9 @@ const LEGACY_ICON_MAP = {
 };
 const resolveIcon = name => LEGACY_ICON_MAP[name] || name || '📚';
 
+const MIN_STAKE = 500;
+const MAX_STAKE = 5000;
+
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function CategorySelectionScreen({ navigation }) {
@@ -36,8 +39,9 @@ export default function CategorySelectionScreen({ navigation }) {
     });
   }
 
-  const stake      = parseFloat(stakeInput) || 0;
-  const canStart   = selected.length === 5 && stake >= 1;
+  const stake        = parseFloat(stakeInput) || 0;
+  const stakeValid   = stake >= MIN_STAKE && stake <= MAX_STAKE;
+  const canStart     = selected.length === 5 && stakeValid;
   const potentialWin = (stake * 2).toFixed(2);
 
   async function handleStart() {
@@ -111,19 +115,48 @@ export default function CategorySelectionScreen({ navigation }) {
 
           {/* Stake section */}
           <View style={styles.stakeCard}>
-            <Text style={styles.stakeLabel}>Stake Amount (USD)</Text>
+            <View style={styles.stakeLabelRow}>
+              <Text style={styles.stakeLabel}>Stake Amount</Text>
+              <Text style={styles.stakeRange}>₦{MIN_STAKE.toLocaleString()} – ₦{MAX_STAKE.toLocaleString()}</Text>
+            </View>
+
+            {/* Quick-select amounts */}
+            <View style={styles.quickStake}>
+              {[500, 1000, 2000, 5000].map(amt => (
+                <TouchableOpacity
+                  key={amt}
+                  onPress={() => setStakeInput(String(amt))}
+                  style={[styles.quickBtn, stake === amt && styles.quickBtnActive]}
+                >
+                  <Text style={[styles.quickBtnText, stake === amt && styles.quickBtnTextActive]}>
+                    ₦{amt.toLocaleString()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <View style={styles.stakeRow}>
-              <Text style={styles.dollarSign}>$</Text>
+              <Text style={styles.nairaSign}>₦</Text>
               <TextInput
                 style={styles.stakeInput}
-                placeholder="0.00"
+                placeholder="0"
                 placeholderTextColor={colors.white30}
                 value={stakeInput}
                 onChangeText={setStakeInput}
                 keyboardType="decimal-pad"
               />
             </View>
-            {stake > 0 && (
+
+            {/* Validation hint */}
+            {stake > 0 && !stakeValid && (
+              <Text style={styles.stakeError}>
+                {stake < MIN_STAKE
+                  ? `Minimum stake is ₦${MIN_STAKE.toLocaleString()}`
+                  : `Maximum stake is ₦${MAX_STAKE.toLocaleString()}`}
+              </Text>
+            )}
+
+            {stake > 0 && stakeValid && (
               <View style={styles.payoutInfo}>
                 <Text style={styles.payoutLine}>
                   Perfect score (10/10): <Text style={{ color: colors.green, fontWeight: '700' }}>{fmt(stake * 2)}</Text>
@@ -163,10 +196,10 @@ export default function CategorySelectionScreen({ navigation }) {
               {loading
                 ? <ActivityIndicator color="#fff" />
                 : <Text style={styles.startBtnText}>
-                    {!canStart && selected.length < 5
+                    {selected.length < 5
                       ? `Select ${5 - selected.length} more categor${5 - selected.length === 1 ? 'y' : 'ies'}`
-                      : !canStart && stake < 1
-                        ? 'Enter stake amount ($1 min)'
+                      : !stakeValid
+                        ? `Enter stake (₦${MIN_STAKE.toLocaleString()}–₦${MAX_STAKE.toLocaleString()})`
                         : '🎮 Start Game'}
                   </Text>}
             </LinearGradient>
@@ -198,13 +231,21 @@ const styles = StyleSheet.create({
     width: 20, height: 20, borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center',
   },
-  stakeCard: { backgroundColor: colors.card, borderRadius: 20, padding: 20, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
-  stakeLabel: { fontSize: 13, color: colors.white50, fontWeight: '600', marginBottom: 10 },
-  stakeRow:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dollarSign: { fontSize: 24, fontWeight: '700', color: colors.teal },
-  stakeInput: { flex: 1, fontSize: 32, fontWeight: '800', color: colors.light },
-  payoutInfo: { marginTop: 14, gap: 4 },
-  payoutLine: { fontSize: 13, color: colors.white50 },
+  stakeCard:      { backgroundColor: colors.card, borderRadius: 20, padding: 20, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
+  stakeLabelRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  stakeLabel:     { fontSize: 13, color: colors.white50, fontWeight: '600' },
+  stakeRange:     { fontSize: 12, color: colors.teal, fontWeight: '600' },
+  quickStake:     { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  quickBtn:       { flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  quickBtnActive: { backgroundColor: 'rgba(9,132,227,0.2)', borderColor: colors.blue },
+  quickBtnText:   { fontSize: 12, fontWeight: '700', color: colors.white50 },
+  quickBtnTextActive: { color: colors.blue },
+  stakeRow:       { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  nairaSign:      { fontSize: 24, fontWeight: '700', color: colors.teal },
+  stakeInput:     { flex: 1, fontSize: 32, fontWeight: '800', color: colors.light },
+  stakeError:     { marginTop: 8, fontSize: 13, color: colors.red, fontWeight: '600' },
+  payoutInfo:     { marginTop: 14, gap: 4 },
+  payoutLine:     { fontSize: 13, color: colors.white50 },
   summaryCard: { backgroundColor: 'rgba(9,132,227,0.12)', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: 'rgba(9,132,227,0.25)' },
   summaryText: { fontSize: 14, color: 'rgba(255,255,255,0.7)', lineHeight: 20 },
   startBtn:    { height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },

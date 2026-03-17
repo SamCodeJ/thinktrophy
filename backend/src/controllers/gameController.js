@@ -36,10 +36,13 @@ async function getResult(req, res, next) {
     const { sessionId } = req.params;
     const session = await getSessionResult(sessionId, req.user.userId);
 
-    // Build question review (fetch all questions with answers)
-    const questionIds = session.active_track === 'a'
+    // Build question review — slice to the number of questions actually served.
+    // Both track arrays contain 15 IDs (10 shared + 5 second-half), but only
+    // current_question_index of them were ever shown to the player.
+    const allQuestionIds = session.active_track === 'a'
       ? session.question_ids_track_a
       : session.question_ids_track_b;
+    const questionIds = allQuestionIds.slice(0, session.current_question_index || 10);
 
     const answersMap = {};
     (session.answers_submitted || []).forEach(a => { answersMap[a.question_id] = a; });

@@ -40,10 +40,18 @@ CREATE TABLE IF NOT EXISTS users (
   total_games_played INTEGER       NOT NULL DEFAULT 0,
   total_won          NUMERIC(12,2) NOT NULL DEFAULT 0.00,
   total_staked       NUMERIC(12,2) NOT NULL DEFAULT 0.00,
-  is_active          BOOLEAN       NOT NULL DEFAULT TRUE,
-  refresh_token_hash TEXT,
-  created_at         TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+  is_active                      BOOLEAN       NOT NULL DEFAULT TRUE,
+  email_verified                 BOOLEAN       NOT NULL DEFAULT FALSE,
+  verification_token_hash        TEXT,
+  verification_token_expires_at  TIMESTAMPTZ,
+  refresh_token_hash             TEXT,
+  created_at                     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
+
+-- Add email verification columns to existing databases
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified                BOOLEAN     NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_hash       TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMPTZ;
 
 -- ─────────────────────────────────────────────────
 --  CATEGORIES

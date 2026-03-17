@@ -140,6 +140,7 @@ function formatQuestionForClient(question, answerMap) {
     options:       answerMap.displayOrder,
     difficulty:    question.difficulty,
     category_id:   question.category_id,
+    category_name: question.category_name || null,
   };
 }
 

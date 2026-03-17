@@ -1,39 +1,59 @@
+const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { query } = require('../db/connection');
 const { signAccessToken, signRefreshToken, verifyRefreshToken, signAdminToken } = require('../utils/jwt');
 const { AppError } = require('../middleware/errorHandler');
+const { sendVerificationEmail } = require('../utils/emailService');
 
 const SALT_ROUNDS = 12;
+const VERIFICATION_EXPIRY_HOURS = 24;
+
+function generateVerificationToken() {
+  const plain = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.createHash('sha256').update(plain).digest('hex');
+  return { plain, hash };
+}
 
 async function register(req, res, next) {
   try {
     const { username, email, password, phone_number } = req.body;
-    const hash = await bcrypt.hash(password, SALT_ROUNDS);
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+    const { plain, hash: tokenHash } = generateVerificationToken();
+    const tokenExpires = new Date(Date.now() + VERIFICATION_EXPIRY_HOURS * 60 * 60 * 1000);
 
     const result = await query(
-      `INSERT INTO users (username, email, password_hash, phone_number)
-       VALUES ($1, $2, $3, $4) RETURNING id, username, email, created_at`,
-      [username, email, hash, phone_number || null]
+      `INSERT INTO users
+         (username, email, password_hash, phone_number, verification_token_hash, verification_token_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, username, email, created_at`,
+      [username, email, passwordHash, phone_number || null, tokenHash, tokenExpires]
     );
     const user = result.rows[0];
-    const accessToken  = signAccessToken({ type: 'user', userId: user.id, username: user.username });
-    const refreshToken = signRefreshToken({ type: 'user', userId: user.id });
 
-    const refreshHash = await bcrypt.hash(refreshToken, 8);
-    await query('UPDATE users SET refresh_token_hash = $1 WHERE id = $2', [refreshHash, user.id]);
+    await sendVerificationEmail(user.email, user.username, plain);
 
     res.status(201).json({
       success: true,
-      data: { user: { id: user.id, username: user.username, email: user.email }, accessToken, refreshToken },
+      data: {
+        message: 'Registration successful. Please check your email to verify your account.',
+        email: user.email,
+      },
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (err.code === '23505') {
+      const field = err.constraint?.includes('email') ? 'Email' : 'Username';
+      return next(new AppError(`${field} is already taken`, 409, 'DUPLICATE_FIELD'));
+    }
+    next(err);
+  }
 }
 
 async function login(req, res, next) {
   try {
     const { email, password } = req.body;
     const result = await query(
-      'SELECT id, username, email, password_hash, is_active FROM users WHERE email = $1',
+      'SELECT id, username, email, password_hash, is_active, email_verified FROM users WHERE email = $1',
       [email]
     );
     const user = result.rows[0];
@@ -43,6 +63,14 @@ async function login(req, res, next) {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
 
+    // if (!user.email_verified) {
+    //   throw new AppError(
+    //     'Email not verified. Please check your inbox and verify your email before logging in.',
+    //     403,
+    //     'EMAIL_NOT_VERIFIED'
+    //   );
+    // }
+
     const accessToken  = signAccessToken({ type: 'user', userId: user.id, username: user.username });
     const refreshToken = signRefreshToken({ type: 'user', userId: user.id });
     const refreshHash  = await bcrypt.hash(refreshToken, 8);
@@ -51,6 +79,79 @@ async function login(req, res, next) {
     res.json({
       success: true,
       data: { user: { id: user.id, username: user.username, email: user.email }, accessToken, refreshToken },
+    });
+  } catch (err) { next(err); }
+}
+
+async function verifyEmail(req, res, next) {
+  try {
+    const { token } = req.query;
+    if (!token) throw new AppError('Verification token is required', 400, 'MISSING_TOKEN');
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const result = await query(
+      `SELECT id, username, email, email_verified, verification_token_expires_at
+       FROM users
+       WHERE verification_token_hash = $1`,
+      [tokenHash]
+    );
+    const user = result.rows[0];
+
+    if (!user) throw new AppError('Invalid or expired verification link', 400, 'INVALID_TOKEN');
+    if (user.email_verified) {
+      return res.json({ success: true, data: { message: 'Email is already verified. You can now log in.' } });
+    }
+    if (new Date() > new Date(user.verification_token_expires_at)) {
+      throw new AppError('Verification link has expired. Please request a new one.', 400, 'TOKEN_EXPIRED');
+    }
+
+    await query(
+      `UPDATE users
+       SET email_verified = TRUE, verification_token_hash = NULL, verification_token_expires_at = NULL
+       WHERE id = $1`,
+      [user.id]
+    );
+
+    res.json({
+      success: true,
+      data: { message: 'Email verified successfully. You can now log in.' },
+    });
+  } catch (err) { next(err); }
+}
+
+async function resendVerification(req, res, next) {
+  try {
+    const { email } = req.body;
+    if (!email) throw new AppError('Email is required', 400, 'MISSING_FIELD');
+
+    const result = await query(
+      'SELECT id, username, email, email_verified FROM users WHERE email = $1',
+      [email]
+    );
+    const user = result.rows[0];
+
+    // Always respond the same way to avoid email enumeration
+    if (!user || user.email_verified) {
+      return res.json({
+        success: true,
+        data: { message: 'If that email exists and is unverified, a new verification link has been sent.' },
+      });
+    }
+
+    const { plain, hash: tokenHash } = generateVerificationToken();
+    const tokenExpires = new Date(Date.now() + VERIFICATION_EXPIRY_HOURS * 60 * 60 * 1000);
+
+    await query(
+      'UPDATE users SET verification_token_hash = $1, verification_token_expires_at = $2 WHERE id = $3',
+      [tokenHash, tokenExpires, user.id]
+    );
+
+    await sendVerificationEmail(user.email, user.username, plain);
+
+    res.json({
+      success: true,
+      data: { message: 'If that email exists and is unverified, a new verification link has been sent.' },
     });
   } catch (err) { next(err); }
 }
@@ -108,4 +209,4 @@ async function adminLogin(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { register, login, refreshToken, logout, adminLogin };
+module.exports = { register, login, verifyEmail, resendVerification, refreshToken, logout, adminLogin };

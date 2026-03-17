@@ -8,8 +8,8 @@ async function getPlatformSettings() {
   const s = {};
   for (const row of result.rows) s[row.key] = row.value;
   return {
-    minStake:      parseFloat(s.min_stake      || '1.00'),
-    maxStake:      parseFloat(s.max_stake      || '1000.00'),
+    minStake:      parseFloat(s.min_stake      || '500.00'),
+    maxStake:      parseFloat(s.max_stake      || '5000.00'),
     payoutPerfect: parseFloat(s.payout_perfect || '2.0'),
     payoutNine:    parseFloat(s.payout_nine    || '1.5'),
   };
@@ -20,9 +20,9 @@ async function createSession(userId, categoryIds, stakeAmount) {
   const settings = await getPlatformSettings();
 
   if (stakeAmount < settings.minStake)
-    throw new AppError(`Minimum stake is $${settings.minStake}`, 400, 'STAKE_TOO_LOW');
+    throw new AppError(`Minimum stake is ₦${settings.minStake.toLocaleString()}`, 400, 'STAKE_TOO_LOW');
   if (stakeAmount > settings.maxStake)
-    throw new AppError(`Maximum stake is $${settings.maxStake}`, 400, 'STAKE_TOO_HIGH');
+    throw new AppError(`Maximum stake is ₦${settings.maxStake.toLocaleString()}`, 400, 'STAKE_TOO_HIGH');
 
   const client = await getClient();
   try {
