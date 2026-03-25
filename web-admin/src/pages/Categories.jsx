@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Edit2, ToggleLeft, ToggleRight, ChevronRight, ChevronLeft, Search, X } from 'lucide-react';
+import { Plus, Edit2, ToggleLeft, ToggleRight, ChevronRight, ChevronLeft, Search, X, ShieldAlert } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
-import { getAdminCategories, createCategory, updateCategory, getCategoryQuestions } from '../api';
+import { getAdminCategories, createCategory, updateCategory, deleteCategory, bulkDeleteCategories, getCategoryQuestions } from '../api';
 import Modal from '../components/Modal';
 import toast from 'react-hot-toast';
+import { useAuth } from '../hooks/useAuth';
 
 // Legacy map keeps old icon_name strings displayable for existing records
 const ICON_MAP = {
@@ -271,11 +272,15 @@ function CategoryQuestionsModal({ cat, onClose }) {
 
 export default function Categories() {
   const qc = useQueryClient();
+  const { admin } = useAuth();
+  const canEdit = admin?.role === 'super_admin' || admin?.role === 'moderator';
+
   const [modal, setModal] = useState(null); // null | 'add' | 'edit' | 'questions'
   const [editing, setEditing] = useState(null);
   const [selectedCat, setSelectedCat] = useState(null);
   const [form, setForm] = useState({ name: '', description: '', icon_name: '⭐' });
   const [showPicker, setShowPicker] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   const { data, isLoading } = useQuery({ queryKey: ['admin-categories'], queryFn: getAdminCategories });
   const categories = data?.data || [];
@@ -291,6 +296,44 @@ export default function Categories() {
     onSuccess: () => { qc.invalidateQueries(['admin-categories']); setModal(null); toast.success('Category updated'); },
     onError: (e) => toast.error(e?.error?.message || 'Failed'),
   });
+
+  const deleteMut = useMutation({
+    mutationFn: deleteCategory,
+    onSuccess: () => { qc.invalidateQueries(['admin-categories']); toast.success('Category deleted'); setSelectedIds(new Set()); },
+    onError: (e) => toast.error(e?.error?.message || 'Failed to delete category'),
+  });
+
+  const bulkDeleteMut = useMutation({
+    mutationFn: bulkDeleteCategories,
+    onSuccess: () => { 
+      qc.invalidateQueries(['admin-categories']); 
+      toast.success('Categories deleted'); 
+      setSelectedIds(new Set()); 
+    },
+    onError: (e) => toast.error(e?.error?.message || 'Failed to delete categories'),
+  });
+
+  function handleSelectAll(e) {
+    if (e.target.checked) {
+      setSelectedIds(new Set(categories.map(c => c.id)));
+    } else {
+      setSelectedIds(new Set());
+    }
+  }
+
+  function handleSelectOne(id) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  }
+
+  function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedIds.size} categories?`)) {
+      bulkDeleteMut.mutate(Array.from(selectedIds));
+    }
+  }
 
   function openEdit(cat) {
     setEditing(cat);
@@ -319,14 +362,37 @@ export default function Categories() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Categories</h1>
-          <p className="text-white/40 text-sm mt-1">{categories.length} categories</p>
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-4">
+          {canEdit && (
+            <input 
+              type="checkbox" 
+              className="w-4 h-4 rounded bg-white/5 border-white/10"
+              checked={categories.length > 0 && selectedIds.size === categories.length}
+              onChange={handleSelectAll}
+            />
+          )}
+          <div>
+            <h1 className="text-2xl font-bold text-white">Categories</h1>
+            <p className="text-white/40 text-sm mt-1">{categories.length} categories</p>
+          </div>
         </div>
-        <button onClick={openAdd} className="btn-primary flex items-center gap-2">
-          <Plus size={16} /> Add Category
-        </button>
+        <div className="flex items-center gap-2">
+          {canEdit && selectedIds.size > 0 && (
+            <button onClick={handleBulkDelete} className="btn-secondary text-red-400 border-red-500/20 hover:bg-red-500/10">
+              Delete Selected ({selectedIds.size})
+            </button>
+          )}
+          {canEdit ? (
+            <button onClick={openAdd} className="btn-primary flex items-center gap-2">
+              <Plus size={16} /> Add Category
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-white/30 bg-white/5 px-3 py-1.5 rounded-lg">
+              <ShieldAlert size={14} /> View Only
+            </div>
+          )}
+        </div>
       </div>
 
       {isLoading ? (
@@ -337,26 +403,47 @@ export default function Categories() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {categories.map(cat => {
             const iconEmoji = resolveIcon(cat.icon_name);
+            const isSelected = selectedIds.has(cat.id);
             return (
-              <div key={cat.id} className="card p-5 flex flex-col gap-4">
+              <div key={cat.id} className={`card p-5 flex flex-col gap-4 transition-colors ${isSelected ? 'border-brand-blue/50 bg-brand-blue/5' : ''}`}>
                 <div className="flex items-start gap-4">
+                  {canEdit && (
+                    <div className="pt-1">
+                      <input 
+                        type="checkbox" 
+                        className="w-4 h-4 rounded bg-white/5 border-white/10"
+                        checked={isSelected}
+                        onChange={() => handleSelectOne(cat.id)}
+                      />
+                    </div>
+                  )}
                   <div className="w-12 h-12 rounded-xl bg-brand-gradient flex items-center justify-center text-2xl flex-shrink-0">
                     {iconEmoji}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <h3 className="font-semibold text-white">{cat.name}</h3>
-                      <div className="flex gap-1.5 flex-shrink-0">
-                        <button onClick={() => openEdit(cat)} className="p-1.5 rounded-lg bg-white/5 hover:bg-brand-blue/20 text-white/40 hover:text-brand-blue transition-colors">
-                          <Edit2 size={13} />
-                        </button>
-                        <button
-                          onClick={() => updateMut.mutate({ id: cat.id, data: { is_active: !cat.is_active } })}
-                          className={`p-1.5 rounded-lg transition-colors ${cat.is_active ? 'bg-green-500/10 text-green-400 hover:bg-red-500/10 hover:text-red-400' : 'bg-white/5 text-white/30 hover:bg-green-500/10 hover:text-green-400'}`}
-                        >
-                          {cat.is_active ? <ToggleRight size={13} /> : <ToggleLeft size={13} />}
-                        </button>
-                      </div>
+                      {canEdit && (
+                        <div className="flex gap-1.5 flex-shrink-0">
+                          <button onClick={() => openEdit(cat)} className="p-1.5 rounded-lg bg-white/5 hover:bg-brand-blue/20 text-white/40 hover:text-brand-blue transition-colors" title="Edit">
+                            <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={() => updateMut.mutate({ id: cat.id, data: { is_active: !cat.is_active } })}
+                            className={`p-1.5 rounded-lg transition-colors ${cat.is_active ? 'bg-green-500/10 text-green-400 hover:bg-red-500/10 hover:text-red-400' : 'bg-white/5 text-white/30 hover:bg-green-500/10 hover:text-green-400'}`}
+                            title={cat.is_active ? "Deactivate" : "Activate"}
+                          >
+                            {cat.is_active ? <ToggleRight size={13} /> : <ToggleLeft size={13} />}
+                          </button>
+                          <button 
+                            onClick={() => window.confirm('Delete category?') && deleteMut.mutate(cat.id)} 
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/40 hover:text-red-400 transition-colors"
+                            title="Delete"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <p className="text-xs text-white/40 mt-0.5 truncate">{cat.description}</p>
                     <div className="flex items-center gap-3 mt-2">

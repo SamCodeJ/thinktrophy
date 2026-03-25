@@ -28,11 +28,11 @@ export default function Download() {
 
         {/* Success header */}
         <div className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-brand-gradient shadow-2xl shadow-brand-blue/30 mx-auto">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl mx-auto shadow-2xl shadow-brand-blue/30">
             {fromSignup ? (
               <CheckCircle2 size={36} className="text-white" />
             ) : (
-              <Trophy size={36} className="text-white" />
+              <img src="/favicon.png" alt="ThinkTrophy" className="w-20 h-20 rounded-3xl" />
             )}
           </div>
 

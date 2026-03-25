@@ -12,6 +12,9 @@ import GameSessions from './pages/GameSessions';
 import GameSessionDetail from './pages/GameSessionDetail';
 import Settings from './pages/Settings';
 import Statistics from './pages/Statistics';
+import Logs from './pages/Logs';
+
+import Admins from './pages/Admins';
 
 function ProtectedRoutes() {
   const { isAuthenticated } = useAuth();
@@ -29,6 +32,8 @@ function ProtectedRoutes() {
         <Route path="game-sessions/:id"  element={<GameSessionDetail />} />
         <Route path="settings"           element={<Settings />} />
         <Route path="statistics"         element={<Statistics />} />
+        <Route path="logs"               element={<Logs />} />
+        <Route path="admins"             element={<Admins />} />
       </Route>
     </Routes>
   );

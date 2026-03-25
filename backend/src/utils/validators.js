@@ -4,7 +4,21 @@ const registerSchema = z.object({
   username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers and underscores'),
   email:    z.string().email(),
   password: z.string().min(8).regex(/[A-Z]/, 'Must contain uppercase').regex(/[0-9]/, 'Must contain a number'),
-  phone_number: z.string().optional(),
+  first_name: z.string().min(1, 'First name is required'),
+  last_name:  z.string().min(1, 'Last name is required'),
+  phone_number: z.string().min(5, 'Phone number is required'),
+  dob: z.string().refine(dateStr => {
+    const dobDate = new Date(dateStr);
+    if (isNaN(dobDate.getTime())) return false;
+    
+    const today = new Date();
+    let age = today.getFullYear() - dobDate.getFullYear();
+    const m = today.getMonth() - dobDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dobDate.getDate())) {
+      age--;
+    }
+    return age >= 18;
+  }, { message: 'You must be at least 18 years old to register' }),
 });
 
 const loginSchema = z.object({

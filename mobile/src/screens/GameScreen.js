@@ -95,14 +95,14 @@ export default function GameScreen({ navigation, route }) {
   }, []);
 
   // Block screenshots while this screen is focused
-  // useFocusEffect(
-  //   useCallback(() => {
-  //     ScreenCapture.preventScreenCaptureAsync();
-  //     return () => {
-  //       ScreenCapture.allowScreenCaptureAsync();
-  //     };
-  //   }, [])
-  // );
+  useFocusEffect(
+    useCallback(() => {
+      ScreenCapture.preventScreenCaptureAsync();
+      return () => {
+        ScreenCapture.allowScreenCaptureAsync();
+      };
+    }, [])
+  );
 
   // Kiosk: monitor app backgrounding
   useEffect(() => {

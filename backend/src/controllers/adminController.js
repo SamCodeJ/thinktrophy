@@ -2,6 +2,7 @@ const { query } = require('../db/connection');
 const { AppError } = require('../middleware/errorHandler');
 const cache = require('../utils/cache');
 const mammoth = require('mammoth');
+const { logAdminAction } = require('../utils/logger');
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 async function getDashboardStats(req, res, next) {
@@ -255,6 +256,16 @@ async function createQuestion(req, res, next) {
       [category_id, question_text, option_a, option_b, option_c, option_d, correct_option, difficulty, req.admin.adminId]
     );
     cache.del('active_categories');
+    
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'CREATE_QUESTION',
+      entity: 'question',
+      entityId: result.rows[0].id,
+      details: { question_text, difficulty },
+      ipAddress: req.ip
+    });
+
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) { next(err); }
 }
@@ -277,6 +288,16 @@ async function updateQuestion(req, res, next) {
       [question_text, option_a, option_b, option_c, option_d, correct_option, difficulty, is_active, id]
     );
     if (!result.rows[0]) throw new AppError('Question not found', 404, 'NOT_FOUND');
+    
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'UPDATE_QUESTION',
+      entity: 'question',
+      entityId: id,
+      details: { is_active },
+      ipAddress: req.ip
+    });
+
     res.json({ success: true, data: result.rows[0] });
   } catch (err) { next(err); }
 }
@@ -285,6 +306,15 @@ async function deleteQuestion(req, res, next) {
   try {
     const { id } = req.params;
     await query('UPDATE questions SET is_active = FALSE WHERE id = $1', [id]);
+    
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'DELETE_QUESTION',
+      entity: 'question',
+      entityId: id,
+      ipAddress: req.ip
+    });
+
     res.json({ success: true, data: { message: 'Question deactivated' } });
   } catch (err) { next(err); }
 }
@@ -392,6 +422,14 @@ async function bulkUploadQuestions(req, res, next) {
       }
     }
 
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'BULK_UPLOAD_QUESTIONS',
+      entity: 'question',
+      details: { inserted: inserted.length, errors: errors.length, categoryId },
+      ipAddress: req.ip
+    });
+
     res.json({ success: true, data: { inserted: inserted.length, errors } });
   } catch (err) { next(err); }
 }
@@ -417,6 +455,16 @@ async function createCategory(req, res, next) {
       [name, description || null, icon_name || 'help-circle']
     );
     cache.del('active_categories');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'CREATE_CATEGORY',
+      entity: 'category',
+      entityId: result.rows[0].id,
+      details: { name },
+      ipAddress: req.ip
+    });
+
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) { next(err); }
 }
@@ -436,7 +484,78 @@ async function updateCategory(req, res, next) {
     );
     if (!result.rows[0]) throw new AppError('Category not found', 404, 'NOT_FOUND');
     cache.del('active_categories');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'UPDATE_CATEGORY',
+      entity: 'category',
+      entityId: id,
+      details: { name, is_active },
+      ipAddress: req.ip
+    });
+
     res.json({ success: true, data: result.rows[0] });
+  } catch (err) { next(err); }
+}
+
+async function deleteCategory(req, res, next) {
+  try {
+    const { id } = req.params;
+    await query('UPDATE categories SET is_active = FALSE WHERE id = $1', [id]);
+    cache.del('active_categories');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'DELETE_CATEGORY',
+      entity: 'category',
+      entityId: id,
+      ipAddress: req.ip
+    });
+
+    res.json({ success: true, data: { message: 'Category deactivated' } });
+  } catch (err) { next(err); }
+}
+
+async function bulkDeleteCategories(req, res, next) {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new AppError('No category IDs provided', 400, 'INVALID_INPUT');
+    }
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    await query(`UPDATE categories SET is_active = FALSE WHERE id IN (${placeholders})`, ids);
+    cache.del('active_categories');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'BULK_DELETE_CATEGORIES',
+      entity: 'category',
+      details: { count: ids.length },
+      ipAddress: req.ip
+    });
+
+    res.json({ success: true, data: { message: `${ids.length} categories deactivated` } });
+  } catch (err) { next(err); }
+}
+
+async function bulkDeleteQuestions(req, res, next) {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new AppError('No question IDs provided', 400, 'INVALID_INPUT');
+    }
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    await query(`UPDATE questions SET is_active = FALSE WHERE id IN (${placeholders})`, ids);
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'BULK_DELETE_QUESTIONS',
+      entity: 'question',
+      details: { count: ids.length },
+      ipAddress: req.ip
+    });
+
+    res.json({ success: true, data: { message: `${ids.length} questions deactivated` } });
   } catch (err) { next(err); }
 }
 
@@ -541,6 +660,16 @@ async function updateUserStatus(req, res, next) {
       [is_active, id]
     );
     if (!result.rows[0]) throw new AppError('User not found', 404, 'NOT_FOUND');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'UPDATE_USER_STATUS',
+      entity: 'user',
+      entityId: id,
+      details: { username: result.rows[0].username, is_active },
+      ipAddress: req.ip
+    });
+
     res.json({ success: true, data: result.rows[0] });
   } catch (err) { next(err); }
 }
@@ -620,6 +749,15 @@ async function updateSettings(req, res, next) {
       );
     }
     cache.del('active_categories');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'UPDATE_SETTINGS',
+      entity: 'settings',
+      details: updates,
+      ipAddress: req.ip
+    });
+
     const result = await query('SELECT key, value FROM platform_settings');
     const settings = {};
     for (const row of result.rows) settings[row.key] = row.value;
@@ -627,10 +765,110 @@ async function updateSettings(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// ─── Logs ──────────────────────────────────────────────────────────────────
+async function getAdminLogs(req, res, next) {
+  try {
+    const { page = 1, limit = 50, action, entity } = req.query;
+    const conditions = [];
+    const params = [];
+
+    if (action) { params.push(action); conditions.push(`l.action = $${params.length}`); }
+    if (entity) { params.push(entity); conditions.push(`l.entity = $${params.length}`); }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    params.push(parseInt(limit), offset);
+
+    const result = await query(
+      `SELECT l.*, a.name AS admin_name, a.email AS admin_email
+       FROM admin_logs l LEFT JOIN admins a ON a.id = l.admin_id
+       ${where}
+       ORDER BY l.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const countRes = await query(`SELECT COUNT(*) FROM admin_logs l ${where}`, params.slice(0, -2));
+
+    res.json({ success: true, data: result.rows, total: parseInt(countRes.rows[0].count) });
+  } catch (err) { next(err); }
+}
+
+// ─── Admins ──────────────────────────────────────────────────────────────────
+async function listAdmins(req, res, next) {
+  try {
+    const result = await query(
+      'SELECT id, name, email, role, created_at FROM admins ORDER BY created_at DESC'
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) { next(err); }
+}
+
+async function createAdmin(req, res, next) {
+  try {
+    const { name, email, password, role = 'viewer' } = req.body;
+    if (!name || !email || !password) {
+      throw new AppError('Name, email, and password are required', 400, 'MISSING_FIELDS');
+    }
+    const bcrypt = require('bcrypt');
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const result = await query(
+      'INSERT INTO admins (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+      [name, email, passwordHash, role]
+    );
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'CREATE_ADMIN',
+      entity: 'admin',
+      entityId: result.rows[0].id,
+      details: { name, email, role },
+      ipAddress: req.ip
+    });
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (err) { next(err); }
+}
+
+async function updateAdminRole(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+    
+    if (!['super_admin', 'moderator', 'viewer'].includes(role)) {
+      throw new AppError('Invalid role', 400, 'INVALID_INPUT');
+    }
+
+    if (id === req.admin.adminId) {
+      throw new AppError('You cannot change your own role', 400, 'INVALID_ACTION');
+    }
+
+    const result = await query(
+      'UPDATE admins SET role = $1 WHERE id = $2 RETURNING id, name, email, role',
+      [role, id]
+    );
+
+    if (!result.rows[0]) throw new AppError('Admin not found', 404, 'NOT_FOUND');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'UPDATE_ADMIN_ROLE',
+      entity: 'admin',
+      entityId: id,
+      details: { email: result.rows[0].email, newRole: role },
+      ipAddress: req.ip
+    });
+
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   getDashboardStats, getStatistics,
-  listQuestions, createQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions,
-  listAdminCategories, createCategory, updateCategory,
+  listQuestions, createQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions, bulkDeleteQuestions,
+  listAdminCategories, createCategory, updateCategory, deleteCategory, bulkDeleteCategories,
   listTransactions, listUsers, getUserDetail, updateUserStatus,
   listGameSessions, getGameSessionDetail, getSettings, updateSettings, getPublicSettings,
+  getAdminLogs, listAdmins, createAdmin, updateAdminRole,
 };

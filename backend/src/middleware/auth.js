@@ -46,6 +46,15 @@ function requireSuperAdmin(req, res, next) {
   });
 }
 
+function requireModeratorOrAbove(req, res, next) {
+  requireAdmin(req, res, () => {
+    if (req.admin.role === 'viewer') {
+      return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You do not have permission to perform this action. Viewer access only.' } });
+    }
+    next();
+  });
+}
+
 async function requireActiveUser(req, res, next) {
   requireUser(req, res, async () => {
     try {
@@ -60,4 +69,4 @@ async function requireActiveUser(req, res, next) {
   });
 }
 
-module.exports = { requireUser, requireAdmin, requireSuperAdmin, requireActiveUser };
+module.exports = { requireUser, requireAdmin, requireSuperAdmin, requireModeratorOrAbove, requireActiveUser };

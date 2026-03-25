@@ -38,9 +38,7 @@ export default function Footer() {
           {/* Brand column */}
           <div className="lg:col-span-2 space-y-4">
             <Link to="/" className="flex items-center gap-2.5 w-fit">
-              <div className="w-9 h-9 rounded-xl bg-brand-gradient flex items-center justify-center">
-                <Trophy size={18} className="text-white" />
-              </div>
+              <img src="/favicon.png" alt="ThinkTrophy" className="w-9 h-9 rounded-xl" />
               <span className="font-bold text-lg text-brand-dark dark:text-white">
                 Think<span className="gradient-text">Trophy</span>
               </span>

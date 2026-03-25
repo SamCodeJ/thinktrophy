@@ -9,8 +9,8 @@ import {
 /* ─── Data ─────────────────────────────────────────────────────────────── */
 
 const stats = [
-  { value: '10,000+', label: 'Questions' },
-  { value: '12',      label: 'Categories' },
+  { value: '130k+', label: 'Questions' },
+  { value: '25+',      label: 'Categories' },
   { value: '50,000+', label: 'Players' },
   { value: '₦500',   label: 'Min Stake' },
 ];
@@ -25,7 +25,7 @@ const features = [
   {
     icon: Zap,
     title: 'Fast-Paced Gameplay',
-    desc: 'Answer 10 questions in under 3 minutes. Every second counts — speed and accuracy matter.',
+    desc: 'Answer 10 questions in 60 seconds. Every second counts — speed and accuracy matter.',
     color: 'text-yellow-500 bg-yellow-500/10 dark:bg-yellow-500/15',
   },
   {
@@ -70,7 +70,7 @@ const steps = [
   {
     step: '03',
     title: 'Pick a Category & Play',
-    desc: 'Choose your topic, stake your amount, and answer 10 questions as fast and accurately as you can.',
+    desc: 'Choose your topic, stake your amount, and answer 10 questions in 60 seconds as fast and accurately as you can.',
     cta: null,
   },
   {
@@ -132,7 +132,7 @@ export default function Home() {
               </h1>
 
               <p className="text-lg text-slate-600 dark:text-white/60 max-w-md leading-relaxed">
-                The ultimate knowledge challenge platform. Answer 10 questions, beat the clock, and walk away with real cash prizes.
+                The ultimate knowledge challenge platform. Answer 10 questions in 60 seconds, beat the clock, and walk away with real cash prizes.
               </p>
 
               <div className="flex flex-wrap gap-3 pt-1">
@@ -145,7 +145,7 @@ export default function Home() {
               </div>
 
               <div className="flex items-center gap-5 pt-2">
-                {['10K+ Questions', 'Real Cash Prizes', 'Fair Play Guaranteed'].map(item => (
+                {['130k+ Questions', 'Real Cash Prizes', 'Fair Play Guaranteed'].map(item => (
                   <div key={item} className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-white/40">
                     <Check size={14} className="text-brand-teal flex-shrink-0" />
                     {item}
@@ -213,7 +213,7 @@ export default function Home() {
 
                 <div className="absolute -right-4 bottom-28 bg-white dark:bg-brand-card rounded-2xl px-4 py-2.5 shadow-xl border border-slate-100 dark:border-white/10 animate-float">
                   <div className="flex items-center gap-2">
-                    <Trophy size={14} className="text-brand-teal" />
+                    <img src="/favicon.png" alt="ThinkTrophy" className="w-3.5 h-3.5 rounded-sm" />
                     <span className="text-xs font-semibold text-slate-700 dark:text-white">+₦2,500 Won!</span>
                   </div>
                 </div>
@@ -255,7 +255,11 @@ export default function Home() {
             {features.map(({ icon: Icon, title, desc, color }) => (
               <div key={title} className="card p-6 hover:shadow-md dark:hover:border-white/10 transition-all duration-200 group">
                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-4 ${color}`}>
-                  <Icon size={22} />
+                  {title === 'Win Real Prizes' ? (
+                    <img src="/favicon.png" alt="ThinkTrophy" className="w-6 h-6 rounded-md" />
+                  ) : (
+                    <Icon size={22} />
+                  )}
                 </div>
                 <h3 className="font-bold text-lg text-brand-dark dark:text-white mb-2">{title}</h3>
                 <p className="text-sm text-slate-500 dark:text-white/50 leading-relaxed">{desc}</p>
@@ -330,7 +334,7 @@ export default function Home() {
       <section className="py-16 bg-slate-50/80 dark:bg-brand-dark/40">
         <div className="section">
           <div className="max-w-3xl mx-auto text-center space-y-6">
-            <SectionLabel><Trophy size={12} /> Payout Structure</SectionLabel>
+            <SectionLabel><img src="/favicon.png" alt="ThinkTrophy" className="w-3 h-3 rounded-sm" /> Payout Structure</SectionLabel>
             <h2 className="text-3xl sm:text-4xl font-black text-brand-dark dark:text-white">
               Score high. Earn more.
             </h2>

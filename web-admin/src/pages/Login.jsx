@@ -40,9 +40,9 @@ export default function Login() {
         <div className="card p-8">
           {/* Logo */}
           <div className="flex flex-col items-center mb-8">
-            <div className="w-16 h-16 rounded-2xl bg-brand-gradient flex items-center justify-center mb-4 shadow-lg shadow-brand-blue/30">
-              <Trophy size={28} className="text-white" />
-            </div>
+          <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center mb-4 shadow-lg shadow-brand-blue/30">
+            <img src="/favicon.png" alt="ThinkTrophy" className="w-16 h-16 rounded-2xl" />
+          </div>
             <h1 className="text-2xl font-bold text-white">ThinkTrophy</h1>
             <p className="text-white/40 text-sm mt-1">Admin Portal</p>
           </div>

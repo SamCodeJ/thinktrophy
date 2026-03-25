@@ -13,10 +13,14 @@ CREATE TABLE IF NOT EXISTS admins (
   name          VARCHAR(100) NOT NULL,
   email         VARCHAR(255) NOT NULL UNIQUE,
   password_hash TEXT         NOT NULL,
-  role          VARCHAR(20)  NOT NULL DEFAULT 'moderator'
-                CHECK (role IN ('super_admin','moderator')),
+  role          VARCHAR(20)  NOT NULL DEFAULT 'viewer'
+                CHECK (role IN ('super_admin','moderator','viewer')),
   created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- Update existing admins table if needed
+ALTER TABLE admins DROP CONSTRAINT IF EXISTS admins_role_check;
+ALTER TABLE admins ADD CONSTRAINT admins_role_check CHECK (role IN ('super_admin','moderator','viewer'));
 
 -- ─────────────────────────────────────────────────
 --  PLATFORM SETTINGS
@@ -35,7 +39,10 @@ CREATE TABLE IF NOT EXISTS users (
   username           VARCHAR(50)  NOT NULL UNIQUE,
   email              VARCHAR(255) NOT NULL UNIQUE,
   password_hash      TEXT         NOT NULL,
-  phone_number       VARCHAR(20),
+  first_name         VARCHAR(100) NOT NULL,
+  last_name          VARCHAR(100) NOT NULL,
+  phone_number       VARCHAR(20)  NOT NULL,
+  dob                DATE         NOT NULL,
   wallet_balance     NUMERIC(12,2) NOT NULL DEFAULT 0.00,
   total_games_played INTEGER       NOT NULL DEFAULT 0,
   total_won          NUMERIC(12,2) NOT NULL DEFAULT 0.00,
@@ -52,6 +59,12 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified                BOOLEAN     NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_hash       TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMPTZ;
+
+-- Add new user profile columns to existing databases
+ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS dob DATE;
+ALTER TABLE users ALTER COLUMN phone_number SET NOT NULL;
 
 -- ─────────────────────────────────────────────────
 --  CATEGORIES
@@ -116,6 +129,24 @@ CREATE TABLE IF NOT EXISTS game_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user   ON game_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON game_sessions(status);
+
+-- ─────────────────────────────────────────────────
+--  ADMIN LOGS
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS admin_logs (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  admin_id    UUID        REFERENCES admins(id) ON DELETE SET NULL,
+  action      VARCHAR(50) NOT NULL,
+  entity      VARCHAR(50) NOT NULL,
+  entity_id   UUID,
+  details     JSONB,
+  ip_address  VARCHAR(45),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_logs_admin_id ON admin_logs(admin_id);
+CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON admin_logs(action);
+CREATE INDEX IF NOT EXISTS idx_admin_logs_date ON admin_logs(created_at);
 
 -- ─────────────────────────────────────────────────
 --  TRANSACTIONS

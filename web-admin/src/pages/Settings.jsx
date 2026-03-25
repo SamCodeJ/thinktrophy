@@ -1,11 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Save, Monitor } from 'lucide-react';
+import { Save, Monitor, ShieldAlert } from 'lucide-react';
 import { getSettings, updateSettings } from '../api';
 import toast from 'react-hot-toast';
+import { useAuth } from '../hooks/useAuth';
 
 export default function Settings() {
   const qc = useQueryClient();
+  const { admin } = useAuth();
+  const canEdit = admin?.role === 'super_admin' || admin?.role === 'moderator';
+
   const { data, isLoading } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
   const [form, setForm] = useState({
     min_stake: '', max_stake: '', payout_perfect: '',
@@ -171,11 +175,16 @@ export default function Settings() {
           )}
         </div>
 
-        <div className="flex justify-end pt-2">
+        <div className="flex justify-between items-center pt-2">
+          {!canEdit && (
+            <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-400/10 px-3 py-2 rounded-lg border border-amber-400/20">
+              <ShieldAlert size={14} /> You have viewer access only. Settings cannot be saved.
+            </div>
+          )}
           <button
             onClick={() => saveMut.mutate()}
-            disabled={saveMut.isPending}
-            className="btn-primary flex items-center gap-2"
+            disabled={saveMut.isPending || !canEdit}
+            className={`btn-primary flex items-center gap-2 ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Save size={16} />
             {saveMut.isPending ? 'Saving…' : 'Save Settings'}

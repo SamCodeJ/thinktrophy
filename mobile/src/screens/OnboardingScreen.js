@@ -13,7 +13,7 @@ const slides = [
   {
     emoji:    '🧠',
     title:    'Think Sharp',
-    subtitle: 'Answer 10 trivia questions from 5 categories you choose — test your knowledge across Science, History, Sports, Tech and Pop Culture.',
+    subtitle: 'Answer 10 trivia questions in 60 seconds from 5 categories you choose — test your knowledge across Science, History, Sports, Tech and Pop Culture.',
   },
   {
     emoji:    '💰',

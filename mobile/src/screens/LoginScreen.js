@@ -55,9 +55,9 @@ export default function LoginScreen({ navigation }) {
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
             {/* Logo */}
             <View style={styles.logoArea}>
-              <LinearGradient colors={[colors.blue, colors.teal]} style={styles.logoBox} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={{ fontSize: 32 }}>🏆</Text>
-              </LinearGradient>
+              <View style={[styles.logoBox, { backgroundColor: 'transparent' }]}>
+                <Text style={{ fontSize: 52 }}>🧠</Text>
+              </View>
               <Text style={styles.logoTitle}>ThinkTrophy</Text>
               <Text style={styles.logoTagline}>Think Sharp. Win Big.</Text>
             </View>

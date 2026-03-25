@@ -5,9 +5,7 @@ export default function NotFound() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-20">
       <div className="text-center space-y-6 max-w-md">
-        <div className="w-20 h-20 rounded-3xl bg-brand-gradient mx-auto flex items-center justify-center shadow-xl shadow-brand-blue/20">
-          <Trophy size={36} className="text-white" />
-        </div>
+        <img src="/favicon.png" alt="ThinkTrophy" className="w-20 h-20 rounded-3xl mx-auto shadow-xl shadow-brand-blue/20" />
         <div>
           <h1 className="text-7xl font-black gradient-text">404</h1>
           <h2 className="text-2xl font-bold text-brand-dark dark:text-white mt-2">Page not found</h2>

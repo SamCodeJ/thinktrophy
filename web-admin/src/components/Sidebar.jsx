@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, HelpCircle, Tag, CreditCard,
-  Users, Gamepad2, Settings, ChevronLeft, BarChart2,
+  Users, Gamepad2, Settings, ChevronLeft, BarChart2, FileText, Shield
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -13,6 +13,8 @@ const navItems = [
   { to: '/users',         icon: Users,           label: 'Users' },
   { to: '/game-sessions', icon: Gamepad2,        label: 'Game Sessions' },
   { to: '/statistics',    icon: BarChart2,       label: 'Statistics' },
+  { to: '/logs',          icon: FileText,        label: 'Logs' },
+  { to: '/admins',        icon: Shield,          label: 'Admins' },
   { to: '/settings',      icon: Settings,        label: 'Settings' },
 ];
 
@@ -43,22 +45,27 @@ export default function Sidebar({ open, setOpen }) {
 
       {/* Nav */}
       <nav className="flex-1 p-3 space-y-1">
-        {navItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all
-               ${isActive
-                 ? 'bg-brand-gradient text-white shadow-lg shadow-brand-blue/20'
-                 : 'text-white/50 hover:text-white hover:bg-white/5'}`
-            }
-          >
-            <Icon size={18} className="flex-shrink-0" />
-            {open && <span>{label}</span>}
-          </NavLink>
-        ))}
+        {navItems.map(({ to, icon: Icon, label }) => {
+          // Hide Admins menu from non-super_admins
+          if (to === '/admins' && admin?.role !== 'super_admin') return null;
+          
+          return (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all
+                 ${isActive
+                   ? 'bg-brand-gradient text-white shadow-lg shadow-brand-blue/20'
+                   : 'text-white/50 hover:text-white hover:bg-white/5'}`
+              }
+            >
+              <Icon size={18} className="flex-shrink-0" />
+              {open && <span>{label}</span>}
+            </NavLink>
+          );
+        })}
       </nav>
 
       {/* User */}

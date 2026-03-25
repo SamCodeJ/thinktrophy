@@ -4,7 +4,8 @@ import * as SecureStore from 'expo-secure-store';
 // Use your PC's local IP address — NOT localhost (that points to the phone itself).
 // Find it by running: ipconfig   (Windows) → look for "IPv4 Address" e.g. 192.168.1.105
 
-const API_URL = 'http://10.189.225.146:4000/api';
+const API_URL = 'http://187.124.168.199:4000/api';
+// const API_URL = 'http://10.189.225.146:4000/api';
 
 // 10.41.29.146
 const client = axios.create({

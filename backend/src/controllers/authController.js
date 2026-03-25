@@ -16,7 +16,7 @@ function generateVerificationToken() {
 
 async function register(req, res, next) {
   try {
-    const { username, email, password, phone_number } = req.body;
+    const { username, email, password, phone_number, first_name, last_name, dob } = req.body;
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
     const { plain, hash: tokenHash } = generateVerificationToken();
@@ -24,10 +24,10 @@ async function register(req, res, next) {
 
     const result = await query(
       `INSERT INTO users
-         (username, email, password_hash, phone_number, verification_token_hash, verification_token_expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (username, email, password_hash, phone_number, first_name, last_name, dob, verification_token_hash, verification_token_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id, username, email, created_at`,
-      [username, email, passwordHash, phone_number || null, tokenHash, tokenExpires]
+      [username, email, passwordHash, phone_number, first_name, last_name, dob, tokenHash, tokenExpires]
     );
     const user = result.rows[0];
 

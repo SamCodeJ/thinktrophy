@@ -6,12 +6,16 @@ import { getUsers, updateUserStatus } from '../api';
 import DataTable from '../components/DataTable';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import { useAuth } from '../hooks/useAuth';
 
 const fmt = n => `₦${parseFloat(n || 0).toFixed(2)}`;
 
 export default function Users() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { admin } = useAuth();
+  const canEdit = admin?.role === 'super_admin' || admin?.role === 'moderator';
+
   const [filters, setFilters] = useState({ search: '', page: 1, limit: 20 });
   const [searchInput, setSearchInput] = useState('');
 
@@ -40,12 +44,14 @@ export default function Users() {
           <button onClick={() => navigate(`/users/${id}`)} className="p-1.5 rounded-lg bg-white/5 hover:bg-brand-blue/20 text-white/40 hover:text-brand-blue transition-colors">
             <Eye size={14} />
           </button>
-          <button
-            onClick={() => statusMut.mutate({ id, is_active: !row.is_active })}
-            className={`p-1.5 rounded-lg transition-colors ${row.is_active ? 'bg-white/5 hover:bg-red-500/20 text-white/40 hover:text-red-400' : 'bg-white/5 hover:bg-green-500/20 text-white/40 hover:text-green-400'}`}
-          >
-            {row.is_active ? <UserX size={14} /> : <UserCheck size={14} />}
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => statusMut.mutate({ id, is_active: !row.is_active })}
+              className={`p-1.5 rounded-lg transition-colors ${row.is_active ? 'bg-white/5 hover:bg-red-500/20 text-white/40 hover:text-red-400' : 'bg-white/5 hover:bg-green-500/20 text-white/40 hover:text-green-400'}`}
+            >
+              {row.is_active ? <UserX size={14} /> : <UserCheck size={14} />}
+            </button>
+          )}
         </div>
       )
     },

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Trophy, Eye, EyeOff, ArrowRight, Check, AlertCircle, User, Mail, Lock } from 'lucide-react';
+import { Trophy, Eye, EyeOff, ArrowRight, Check, AlertCircle, User, Mail, Lock, Phone, Calendar, Type } from 'lucide-react';
 import axios from 'axios';
 
 const rules = [
@@ -18,7 +18,10 @@ function checkRule(password, i) {
 
 export default function SignUp() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({ username: '', email: '', password: '', confirm: '' });
+  const [form, setForm] = useState({ 
+    username: '', email: '', password: '', confirm: '', 
+    first_name: '', last_name: '', phone_number: '', dob: '' 
+  });
   const [showPw, setShowPw]         = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [agreed, setAgreed]         = useState(false);
@@ -51,6 +54,10 @@ export default function SignUp() {
         username: form.username,
         email:    form.email,
         password: form.password,
+        first_name: form.first_name,
+        last_name: form.last_name,
+        phone_number: form.phone_number,
+        dob: form.dob,
       });
       navigate('/download', { state: { fromSignup: true, username: form.username } });
     } catch (err) {
@@ -78,9 +85,7 @@ export default function SignUp() {
           {/* Header */}
           <div className="text-center mb-8">
             <Link to="/" className="inline-flex items-center gap-2 mb-5">
-              <div className="w-11 h-11 rounded-2xl bg-brand-gradient flex items-center justify-center shadow-lg shadow-brand-blue/30">
-                <Trophy size={20} className="text-white" />
-              </div>
+              <img src="/favicon.png" alt="ThinkTrophy" className="w-11 h-11 rounded-2xl shadow-lg shadow-brand-blue/30" />
               <span className="font-bold text-xl text-brand-dark dark:text-white">
                 Think<span className="gradient-text">Trophy</span>
               </span>
@@ -100,6 +105,80 @@ export default function SignUp() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              {/* First Name */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-white/70 mb-1.5">
+                  First Name
+                </label>
+                <div className="relative">
+                  <Type size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30 pointer-events-none" />
+                  <input
+                    className="input pl-10"
+                    type="text"
+                    placeholder="John"
+                    value={form.first_name}
+                    onChange={e => set('first_name', e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Last Name */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-white/70 mb-1.5">
+                  Last Name
+                </label>
+                <div className="relative">
+                  <Type size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30 pointer-events-none" />
+                  <input
+                    className="input pl-10"
+                    type="text"
+                    placeholder="Doe"
+                    value={form.last_name}
+                    onChange={e => set('last_name', e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Date of Birth and Phone */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-white/70 mb-1.5">
+                  Date of Birth
+                </label>
+                <div className="relative">
+                  <Calendar size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30 pointer-events-none" />
+                  <input
+                    className="input pl-10"
+                    type="date"
+                    value={form.dob}
+                    onChange={e => set('dob', e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-white/70 mb-1.5">
+                  Phone Number
+                </label>
+                <div className="relative">
+                  <Phone size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30 pointer-events-none" />
+                  <input
+                    className="input pl-10"
+                    type="tel"
+                    placeholder="+234..."
+                    value={form.phone_number}
+                    onChange={e => set('phone_number', e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Username */}
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-white/70 mb-1.5">

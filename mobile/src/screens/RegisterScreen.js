@@ -11,14 +11,17 @@ import { useAuth } from '../store/authStore';
 
 export default function RegisterScreen({ navigation }) {
   const { signIn } = useAuth();
-  const [form, setForm]       = useState({ username: '', email: '', phone_number: '', password: '' });
+  const [form, setForm]       = useState({ 
+    username: '', email: '', phone_number: '', password: '',
+    first_name: '', last_name: '', dob: '' 
+  });
   const [loading, setLoading] = useState(false);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   async function handleRegister() {
-    if (!form.username || !form.email || !form.password) {
-      Alert.alert('Missing fields', 'Username, email and password are required.');
+    if (!form.username || !form.email || !form.password || !form.first_name || !form.last_name || !form.phone_number || !form.dob) {
+      Alert.alert('Missing fields', 'All fields are required.');
       return;
     }
     setLoading(true);
@@ -47,9 +50,12 @@ export default function RegisterScreen({ navigation }) {
 
             <View style={styles.card}>
               {[
+                { key: 'first_name',   label: 'First Name',   placeholder: 'John',           keyboard: 'default',       auto: 'name'     },
+                { key: 'last_name',    label: 'Last Name',    placeholder: 'Doe',            keyboard: 'default',       auto: 'name'     },
                 { key: 'username',     label: 'Username',     placeholder: 'coolplayer99',   keyboard: 'default',       auto: 'username' },
                 { key: 'email',        label: 'Email',        placeholder: 'you@email.com',  keyboard: 'email-address', auto: 'email'    },
-                { key: 'phone_number', label: 'Phone (opt.)', placeholder: '+1 234 567 8901', keyboard: 'phone-pad',    auto: 'tel'      },
+                { key: 'phone_number', label: 'Phone',        placeholder: '+1 234 567 8901', keyboard: 'phone-pad',    auto: 'tel'      },
+                { key: 'dob',          label: 'Date of Birth (YYYY-MM-DD)', placeholder: '2000-01-01', keyboard: 'default', auto: 'none' },
                 { key: 'password',     label: 'Password',     placeholder: '••••••••',       keyboard: 'default',       auto: 'password', secure: true },
               ].map(f => (
                 <View key={f.key} style={styles.field}>

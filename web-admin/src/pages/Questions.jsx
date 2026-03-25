@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Upload, Edit2, ToggleLeft, ToggleRight, Download, CheckCircle2, XCircle, AlertTriangle, Search, X } from 'lucide-react';
+import { Plus, Upload, Edit2, ToggleLeft, ToggleRight, Download, CheckCircle2, XCircle, AlertTriangle, Search, X, ShieldAlert } from 'lucide-react';
 import { Document, Paragraph, TextRun, Packer } from 'docx';
 import {
-  getQuestions, createQuestion, updateQuestion,
+  getQuestions, createQuestion, updateQuestion, deleteQuestion, bulkDeleteQuestions,
   getAdminCategories, bulkUploadQuestions,
 } from '../api';
 import Modal from '../components/Modal';
 import DataTable from '../components/DataTable';
 import toast from 'react-hot-toast';
+import { useAuth } from '../hooks/useAuth';
 
 const BLANK = { category_id: '', question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_option: 'a', difficulty: 'medium' };
 
@@ -83,12 +84,16 @@ function QuestionForm({ initial, categories, onSave, loading }) {
 
 export default function Questions() {
   const qc = useQueryClient();
+  const { admin } = useAuth();
+  const canEdit = admin?.role === 'super_admin' || admin?.role === 'moderator';
+
   const [filters, setFilters] = useState({ search: '', category_id: '', difficulty: '', status: '', page: 1, limit: 20 });
   const [searchInput, setSearchInput] = useState('');
   const [modal, setModal] = useState(null); // null | 'add' | 'edit' | 'bulk' | 'report'
   const [editing, setEditing] = useState(null);
   const [bulkFile, setBulkFile] = useState(null);
   const [uploadReport, setUploadReport] = useState(null); // { inserted, errors, filename }
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   const { data: catData } = useQuery({ queryKey: ['admin-categories'], queryFn: getAdminCategories });
   const categories = catData?.data || [];
@@ -118,6 +123,44 @@ export default function Questions() {
     },
     onError: e => toast.error(e?.error?.message || 'Failed to update status'),
   });
+
+  const deleteMut = useMutation({
+    mutationFn: deleteQuestion,
+    onSuccess: () => { qc.invalidateQueries(['questions']); toast.success('Question deleted'); setSelectedIds(new Set()); },
+    onError: (e) => toast.error(e?.error?.message || 'Failed to delete question'),
+  });
+
+  const bulkDeleteMut = useMutation({
+    mutationFn: bulkDeleteQuestions,
+    onSuccess: () => { 
+      qc.invalidateQueries(['questions']); 
+      toast.success('Questions deleted'); 
+      setSelectedIds(new Set()); 
+    },
+    onError: (e) => toast.error(e?.error?.message || 'Failed to delete questions'),
+  });
+
+  function handleSelectAll(e) {
+    if (e.target.checked && data?.data) {
+      setSelectedIds(new Set(data.data.map(q => q.id)));
+    } else {
+      setSelectedIds(new Set());
+    }
+  }
+
+  function handleSelectOne(id) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  }
+
+  function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedIds.size} questions?`)) {
+      bulkDeleteMut.mutate(Array.from(selectedIds));
+    }
+  }
 
   const bulkMut = useMutation({
     mutationFn: ({ fd }) => bulkUploadQuestions(fd),
@@ -220,13 +263,33 @@ export default function Questions() {
   }
 
   const columns = [
+    {
+      key: 'select',
+      header: canEdit ? (
+        <input 
+          type="checkbox" 
+          className="w-4 h-4 rounded bg-white/5 border-white/10"
+          checked={data?.data?.length > 0 && selectedIds.size === data.data.length}
+          onChange={handleSelectAll}
+        />
+      ) : null,
+      sortable: false,
+      render: (v, row) => canEdit ? (
+        <input 
+          type="checkbox" 
+          className="w-4 h-4 rounded bg-white/5 border-white/10"
+          checked={selectedIds.has(row.id)}
+          onChange={() => handleSelectOne(row.id)}
+        />
+      ) : null,
+    },
     { key: 'question_text', header: 'Question', render: v => <span className="max-w-xs truncate block" title={v}>{v}</span> },
     { key: 'category_name', header: 'Category', render: v => <span className="text-white/60">{v}</span> },
     { key: 'difficulty',    header: 'Difficulty', render: v => <span className={`badge-${v}`}>{v}</span> },
     { key: 'times_served',  header: 'Served', render: v => <span className="text-white/60">{v}</span> },
     { key: 'accuracy_pct',  header: 'Accuracy', render: v => <span className="text-brand-teal font-medium">{v}%</span> },
     { key: 'is_active',     header: 'Status', render: v => <span className={v ? 'badge-active' : 'badge-inactive'}>{v ? 'Active' : 'Inactive'}</span> },
-    {
+    ...(canEdit ? [{
       key: 'id', header: 'Actions', sortable: false, render: (id, row) => (
         <div className="flex gap-2">
           <button
@@ -248,9 +311,16 @@ export default function Questions() {
           >
             {row.is_active ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}
           </button>
+          <button
+            onClick={() => window.confirm('Delete question?') && deleteMut.mutate(id)}
+            className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/50 hover:text-red-400 transition-colors"
+            title="Delete question"
+          >
+            <X size={14} />
+          </button>
         </div>
       )
-    },
+    }] : []),
   ];
 
   return (
@@ -261,12 +331,25 @@ export default function Questions() {
           <p className="text-white/40 text-sm mt-1">{data?.total || 0} questions total</p>
         </div>
         <div className="flex gap-3">
-          <button onClick={() => setModal('bulk')} className="btn-secondary flex items-center gap-2">
-            <Upload size={16} /> Bulk Upload
-          </button>
-          <button onClick={() => setModal('add')} className="btn-primary flex items-center gap-2">
-            <Plus size={16} /> Add Question
-          </button>
+          {canEdit && selectedIds.size > 0 && (
+            <button onClick={handleBulkDelete} className="btn-secondary text-red-400 border-red-500/20 hover:bg-red-500/10">
+              Delete Selected ({selectedIds.size})
+            </button>
+          )}
+          {canEdit ? (
+            <>
+              <button onClick={() => setModal('bulk')} className="btn-secondary flex items-center gap-2">
+                <Upload size={16} /> Bulk Upload
+              </button>
+              <button onClick={() => setModal('add')} className="btn-primary flex items-center gap-2">
+                <Plus size={16} /> Add Question
+              </button>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-white/30 bg-white/5 px-3 py-1.5 rounded-lg">
+              <ShieldAlert size={14} /> View Only
+            </div>
+          )}
         </div>
       </div>
 
