@@ -4,6 +4,12 @@ import Footer from './components/Footer';
 import Home from './pages/Home';
 import SignUp from './pages/SignUp';
 import Download from './pages/Download';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import PaymentPolicy from './pages/PaymentPolicy';
+import IntegrityPolicy from './pages/IntegrityPolicy';
+import CompliancePolicy from './pages/CompliancePolicy';
+import AMLPolicy from './pages/AMLPolicy';
+import TermsAndConditions from './pages/TermsAndConditions';
 import NotFound from './pages/NotFound';
 
 export default function App() {
@@ -15,6 +21,12 @@ export default function App() {
           <Route path="/"          element={<Home />} />
           <Route path="/signup"    element={<SignUp />} />
           <Route path="/download"  element={<Download />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/payment-policy" element={<PaymentPolicy />} />
+          <Route path="/integrity-policy" element={<IntegrityPolicy />} />
+          <Route path="/compliance-policy" element={<CompliancePolicy />} />
+          <Route path="/aml-policy" element={<AMLPolicy />} />
+          <Route path="/terms" element={<TermsAndConditions />} />
           <Route path="*"          element={<NotFound />} />
         </Routes>
       </main>
