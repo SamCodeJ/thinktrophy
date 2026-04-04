@@ -27,8 +27,9 @@ const links = {
   Company:  [
     { label: 'About Us',   href: '#' },
     { label: 'Blog',       href: '#' },
-    { label: 'Careers',    href: '#' },
-    { label: 'Contact',    href: '#' },
+    { label: 'Careers',    href: '/careers' },
+    { label: 'FAQ',        href: '/faq' },
+    { label: 'Contact',    href: '/contact' },
   ],
   Legal:    [
     { label: 'Privacy Policy',   href: '/privacy-policy' },

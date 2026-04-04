@@ -10,6 +10,9 @@ import IntegrityPolicy from './pages/IntegrityPolicy';
 import CompliancePolicy from './pages/CompliancePolicy';
 import AMLPolicy from './pages/AMLPolicy';
 import TermsAndConditions from './pages/TermsAndConditions';
+import Contact from './pages/Contact';
+import FAQ from './pages/FAQ';
+import Careers from './pages/Careers';
 import NotFound from './pages/NotFound';
 
 export default function App() {
@@ -27,6 +30,9 @@ export default function App() {
           <Route path="/compliance-policy" element={<CompliancePolicy />} />
           <Route path="/aml-policy" element={<AMLPolicy />} />
           <Route path="/terms" element={<TermsAndConditions />} />
+          <Route path="/contact" element={<Contact />} />
+          <Route path="/faq" element={<FAQ />} />
+          <Route path="/careers" element={<Careers />} />
           <Route path="*"          element={<NotFound />} />
         </Routes>
       </main>
