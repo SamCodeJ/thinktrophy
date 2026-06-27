@@ -1,7 +1,11 @@
 import axios from 'axios';
 
+/**
+ * - Leave VITE_API_URL unset: requests use relative `/api/...` (Vite dev/preview proxy → backend).
+ * - Set VITE_API_URL to API origin only, e.g. `http://localhost:4000` (no trailing /api).
+ */
 const client = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? '',
   headers: { 'Content-Type': 'application/json' },
 });
 

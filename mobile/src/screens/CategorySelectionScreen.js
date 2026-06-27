@@ -8,7 +8,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../utils/theme';
-import { getCategories, createGameSession } from '../api';
+import { getCategories, createGameSession, getProfile } from '../api';
+import { useAuth } from '../store/authStore';
 
 // Legacy map for old-style icon_name strings; new categories store the emoji directly
 const LEGACY_ICON_MAP = {
@@ -23,12 +24,16 @@ const MAX_STAKE = 5000;
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function CategorySelectionScreen({ navigation }) {
+  const { user } = useAuth();
   const [selected, setSelected]     = useState([]);
   const [stakeInput, setStakeInput] = useState('');
   const [loading, setLoading]       = useState(false);
 
-  const { data, isLoading } = useQuery({ queryKey: ['categories'], queryFn: getCategories });
-  const categories = data?.data || [];
+  const { data: catData, isLoading } = useQuery({ queryKey: ['categories'], queryFn: getCategories });
+  const { data: profileData }        = useQuery({ queryKey: ['profile'], queryFn: getProfile });
+  
+  const categories = catData?.data || [];
+  const balance    = parseFloat(profileData?.data?.wallet_balance || user?.wallet_balance || 0);
 
   function toggleCategory(id) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -41,8 +46,9 @@ export default function CategorySelectionScreen({ navigation }) {
 
   const stake        = parseFloat(stakeInput) || 0;
   const stakeValid   = stake >= MIN_STAKE && stake <= MAX_STAKE;
-  const canStart     = selected.length === 5 && stakeValid;
-  const potentialWin = (stake * 2).toFixed(2);
+  const hasEnoughBalance = stake <= balance;
+  const canStart     = selected.length === 5 && stakeValid && hasEnoughBalance;
+  const potentialWin = stake * 2;
 
   async function handleStart() {
     if (!canStart) return;
@@ -57,6 +63,7 @@ export default function CategorySelectionScreen({ navigation }) {
         sessionToken: res.data.sessionToken,
         firstQuestion: res.data.question,
         questionNumber: res.data.questionNumber,
+        gameDuration: res.data.gameDuration,
       });
     } catch (err) {
       Alert.alert('Error', err?.error?.message || 'Could not start game. Check your wallet balance.');
@@ -99,9 +106,6 @@ export default function CategorySelectionScreen({ navigation }) {
                     )}
                     <Text style={styles.catIcon}>{resolveIcon(cat.icon_name)}</Text>
                     <Text style={[styles.catName, isSelected && styles.catNameSelected]}>{cat.name}</Text>
-                    <Text style={[styles.catCount, isSelected && styles.catCountSelected]}>
-                      {cat.question_count} Q
-                    </Text>
                     {isSelected && (
                       <View style={styles.checkBadge}>
                         <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>✓</Text>
@@ -115,9 +119,17 @@ export default function CategorySelectionScreen({ navigation }) {
 
           {/* Stake section */}
           <View style={styles.stakeCard}>
-            <View style={styles.stakeLabelRow}>
-              <Text style={styles.stakeLabel}>Stake Amount</Text>
-              <Text style={styles.stakeRange}>₦{MIN_STAKE.toLocaleString()} – ₦{MAX_STAKE.toLocaleString()}</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View>
+                <Text style={styles.stakeLabel}>Stake Amount</Text>
+                <Text style={styles.stakeRange}>₦{MIN_STAKE.toLocaleString('en-NG')} – ₦{MAX_STAKE.toLocaleString('en-NG')}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.stakeLabel}>Balance</Text>
+                <Text style={{ color: balance < stake ? colors.red : colors.green, fontWeight: '700', fontSize: 13 }}>
+                  {fmt(balance)}
+                </Text>
+              </View>
             </View>
 
             {/* Quick-select amounts */}
@@ -151,18 +163,23 @@ export default function CategorySelectionScreen({ navigation }) {
             {stake > 0 && !stakeValid && (
               <Text style={styles.stakeError}>
                 {stake < MIN_STAKE
-                  ? `Minimum stake is ₦${MIN_STAKE.toLocaleString()}`
-                  : `Maximum stake is ₦${MAX_STAKE.toLocaleString()}`}
+                  ? `Minimum stake is ₦${MIN_STAKE.toLocaleString('en-NG')}`
+                  : `Maximum stake is ₦${MAX_STAKE.toLocaleString('en-NG')}`}
+              </Text>
+            )}
+            {stake > 0 && stakeValid && !hasEnoughBalance && (
+              <Text style={styles.stakeError}>
+                Insufficient wallet balance. You need {fmt(stake - balance)} more.
               </Text>
             )}
 
-            {stake > 0 && stakeValid && (
+            {stake > 0 && stakeValid && hasEnoughBalance && (
               <View style={styles.payoutInfo}>
                 <Text style={styles.payoutLine}>
                   Perfect score (10/10): <Text style={{ color: colors.green, fontWeight: '700' }}>{fmt(stake * 2)}</Text>
                 </Text>
                 <Text style={styles.payoutLine}>
-                  9/10 score: <Text style={{ color: colors.teal, fontWeight: '700' }}>{fmt(stake * 1.5)}</Text>
+                  9/10 score: <Text style={{ color: colors.teal, fontWeight: '700' }}>{fmt(stake * 0.5)}</Text>
                 </Text>
                 <Text style={[styles.payoutLine, { color: colors.white30 }]}>
                   ≤ 8/10: ₦0.00 (stake lost)
@@ -199,8 +216,10 @@ export default function CategorySelectionScreen({ navigation }) {
                     {selected.length < 5
                       ? `Select ${5 - selected.length} more categor${5 - selected.length === 1 ? 'y' : 'ies'}`
                       : !stakeValid
-                        ? `Enter stake (₦${MIN_STAKE.toLocaleString()}–₦${MAX_STAKE.toLocaleString()})`
-                        : '🎮 Start Game'}
+                        ? `Enter stake (₦${MIN_STAKE.toLocaleString('en-NG')}–₦${MAX_STAKE.toLocaleString('en-NG')})`
+                        : !hasEnoughBalance
+                          ? 'Insufficient Balance'
+                          : '🎮 Start Game'}
                   </Text>}
             </LinearGradient>
           </TouchableOpacity>
@@ -224,8 +243,6 @@ const styles = StyleSheet.create({
   catIcon:        { fontSize: 32, marginBottom: 8 },
   catName:        { fontSize: 14, fontWeight: '700', color: colors.white50, textAlign: 'center' },
   catNameSelected: { color: '#fff' },
-  catCount:       { fontSize: 11, color: colors.white30, marginTop: 4 },
-  catCountSelected: { color: 'rgba(255,255,255,0.7)' },
   checkBadge: {
     position: 'absolute', top: 8, right: 8,
     width: 20, height: 20, borderRadius: 10,

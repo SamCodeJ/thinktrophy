@@ -1,7 +1,10 @@
 const router = require('express').Router();
-const { deposit, verifyPayment, withdraw } = require('../controllers/paymentController');
+const { deposit, verifyPayment, withdraw, webhook } = require('../controllers/paymentController');
 const { validate, depositSchema, withdrawSchema } = require('../utils/validators');
 const { requireActiveUser } = require('../middleware/auth');
+
+// Webhook route must be public
+router.post('/webhook', webhook);
 
 router.use(requireActiveUser);
 

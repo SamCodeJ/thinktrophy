@@ -6,7 +6,7 @@ import { getUserDetail, updateUserStatus } from '../api';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
-const fmt = n => `₦${parseFloat(n || 0).toFixed(2)}`;
+import { formatNaira as fmt } from '../utils/formatNaira';
 const PAGE_SIZE_OPTIONS = [10, 15, 25, 50];
 
 function MiniPagination({ page, setPage, total, pageSize, setPageSize }) {

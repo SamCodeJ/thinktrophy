@@ -60,6 +60,12 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified                BOOLEAN
 ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_hash       TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMPTZ;
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_code_hash      TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at     TIMESTAMPTZ;
+
+ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_code_hash     TEXT;
+ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_expires_at    TIMESTAMPTZ;
+
 -- Add new user profile columns to existing databases
 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100);
@@ -168,6 +174,39 @@ CREATE INDEX IF NOT EXISTS idx_transactions_user   ON transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_type   ON transactions(type);
 CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
 CREATE INDEX IF NOT EXISTS idx_transactions_date   ON transactions(created_at);
+
+-- ─────────────────────────────────────────────────
+--  LANDING PAGE TESTIMONIALS (managed in admin)
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS testimonials (
+  id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  author_name   VARCHAR(120) NOT NULL,
+  author_title  VARCHAR(200),
+  quote         TEXT         NOT NULL,
+  rating        SMALLINT     CHECK (rating IS NULL OR (rating >= 1 AND rating <= 5)),
+  sort_order    INTEGER      NOT NULL DEFAULT 0,
+  is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_testimonials_active_sort ON testimonials (is_active, sort_order);
+-- ─────────────────────────────────────────────────
+--  WEBHOOK LOGS
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS webhook_logs (
+  id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider      VARCHAR(50)  NOT NULL DEFAULT 'flutterwave',
+  event_type    VARCHAR(100) NOT NULL,
+  payload       JSONB        NOT NULL,
+  status        VARCHAR(20)  NOT NULL DEFAULT 'processed' CHECK (status IN ('processed', 'failed', 'ignored')),
+  error_message TEXT,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_logs_provider ON webhook_logs(provider);
+CREATE INDEX IF NOT EXISTS idx_webhook_logs_event_type ON webhook_logs(event_type);
+CREATE INDEX IF NOT EXISTS idx_webhook_logs_date ON webhook_logs(created_at);
 `;
 
 async function migrate() {

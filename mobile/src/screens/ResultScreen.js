@@ -106,6 +106,9 @@ export default function ResultScreen({ navigation, route }) {
                 <Text style={styles.scoreDivider}>/10</Text>
               </View>
               <Text style={styles.scoreSubLabel}>Correct Answers</Text>
+              <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8, fontFamily: 'monospace' }}>
+                Game ID: {sessionId.substring(0, 8).toUpperCase()}
+              </Text>
             </View>
 
             {/* Payout display */}
@@ -114,7 +117,9 @@ export default function ResultScreen({ navigation, route }) {
                 <>
                   <Text style={styles.payoutLabel}>You Won</Text>
                   <Text style={styles.payoutAmount}>{fmt(payout)}</Text>
-                  <Text style={styles.payoutSub}>+{fmt(payout - stake)} profit · Credited to wallet</Text>
+                  <Text style={styles.payoutSub}>
+                    {payout >= stake ? `+${fmt(payout - stake)} profit` : `-${fmt(stake - payout)} loss`} · Credited to wallet
+                  </Text>
                 </>
               ) : (
                 <>

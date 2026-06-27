@@ -174,7 +174,8 @@ async function seed() {
       ['min_stake',       '500.00'],
       ['max_stake',       '5000.00'],
       ['payout_perfect',  '2.0'],
-      ['payout_nine',     '1.5'],
+      ['payout_nine',     '0.5'],
+      ['game_duration',   '60'],
       ['platform_name',   'ThinkTrophy'],
       ['platform_tagline','Think Sharp. Win Big.'],
     ];
@@ -226,6 +227,32 @@ async function seed() {
       ON CONFLICT (email) DO NOTHING
     `, [userHash]);
     console.log('  ✓ Demo user seeded (player@thinktrophy.com / Player@123456)');
+
+    // One row at a time, only if that exact quote is missing — so existing user-added rows
+    // do not block the rest of the sample set (unlike INSERT-when-empty-only).
+    const sampleTestimonials = [
+      ['Chidi O.', 'Lagos', 'Finally a trivia app that pays out fast. I hit 10/10 twice last week — the rush is unreal.', 5, 0, true],
+      ['Amaka K.', 'Abuja', 'Clean UI, fair questions, and withdrawals actually work. My go-to during lunch breaks.', 5, 1, true],
+      ['Tunde M.', 'Port Harcourt', 'Love the variety of categories. History and Science are my favorites.', 4, 2, true],
+      ['Ibrahim S.', 'Kano', 'The 60-second rounds keep me sharp. I have not missed my evening session in a month — leaderboard here I come.', 5, 3, true],
+      ['Ngozi E.', 'Enugu', 'I started for the prizes and stayed for the questions. Tech and Literature categories are genuinely tough but fair.', 5, 4, true],
+    ];
+    let addedSamples = 0;
+    for (const row of sampleTestimonials) {
+      const ins = await client.query(
+        `INSERT INTO testimonials (author_name, author_title, quote, rating, sort_order, is_active)
+         SELECT $1, $2, $3, $4, $5, $6
+         WHERE NOT EXISTS (SELECT 1 FROM testimonials WHERE quote = $3)`,
+        row
+      );
+      if (ins.rowCount > 0) {
+        addedSamples++;
+        console.log(`  ✓ Added sample testimonial: ${row[0]}`);
+      }
+    }
+    if (addedSamples === 0) {
+      console.log('  · Sample testimonials: all quotes already present (skipped)');
+    }
 
     await client.query('COMMIT');
     console.log('✅ Seeding complete!');

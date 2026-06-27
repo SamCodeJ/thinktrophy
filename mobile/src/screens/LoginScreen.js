@@ -81,7 +81,12 @@ export default function LoginScreen({ navigation }) {
               </View>
 
               <View style={styles.field}>
-                <Text style={styles.label}>Password</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={[styles.label, { marginBottom: 0 }]}>Password</Text>
+                  <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
+                    <Text style={{ color: colors.teal, fontSize: 13, fontWeight: '600' }}>Forgot?</Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={{ position: 'relative' }}>
                   <TextInput
                     style={[styles.input, { paddingRight: 50 }]}

@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { colors } from '../utils/theme';
 import { useAuth } from '../store/authStore';
-import { getProfile, getGameHistory, logout } from '../api';
+import { getProfile, getGameHistory, logout, updatePassword } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -24,6 +24,10 @@ const BADGES = [
 export default function ProfileScreen({ navigation }) {
   const { signOut }  = useAuth();
 
+  const [showPwModal, setShowPwModal] = useState(false);
+  const [pwForm, setPwForm] = useState({ old_password: '', new_password: '' });
+  const [loading, setLoading] = useState(false);
+
   const { data: profileData } = useQuery({ queryKey: ['profile'],  queryFn: getProfile });
   const { data: historyData } = useQuery({ queryKey: ['history'],  queryFn: getGameHistory });
 
@@ -35,6 +39,24 @@ export default function ProfileScreen({ navigation }) {
   const bestScore = history.reduce((max, g) => Math.max(max, g.score || 0), 0);
 
   const earnedBadges = BADGES.filter(b => profile && b.condition(profile));
+
+  async function handleChangePassword() {
+    if (!pwForm.old_password || !pwForm.new_password) {
+      Alert.alert('Error', 'Please fill in all fields.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await updatePassword(pwForm);
+      Alert.alert('Success', res.data.message);
+      setShowPwModal(false);
+      setPwForm({ old_password: '', new_password: '' });
+    } catch (err) {
+      Alert.alert('Error', err?.error?.message || 'Failed to update password.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function handleLogout() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -106,11 +128,59 @@ export default function ProfileScreen({ navigation }) {
             <Text style={styles.historyChevron}>›</Text>
           </TouchableOpacity>
 
+          {/* Change Password link */}
+          <TouchableOpacity
+            onPress={() => setShowPwModal(true)}
+            style={styles.historyBtn}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.historyIcon}>🔐</Text>
+            <Text style={styles.historyText}>Change Password</Text>
+            <Text style={styles.historyChevron}>›</Text>
+          </TouchableOpacity>
+
           {/* Sign out */}
           <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn} activeOpacity={0.7}>
             <Text style={styles.logoutText}>Sign Out</Text>
           </TouchableOpacity>
         </ScrollView>
+
+        <Modal visible={showPwModal} transparent animationType="fade">
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalBg}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Change Password</Text>
+              
+              <Text style={styles.label}>Current Password</Text>
+              <TextInput
+                style={styles.input}
+                secureTextEntry
+                placeholder="••••••••"
+                placeholderTextColor={colors.white30}
+                value={pwForm.old_password}
+                onChangeText={v => setPwForm(f => ({ ...f, old_password: v }))}
+              />
+
+              <Text style={[styles.label, { marginTop: 12 }]}>New Password</Text>
+              <TextInput
+                style={styles.input}
+                secureTextEntry
+                placeholder="••••••••"
+                placeholderTextColor={colors.white30}
+                value={pwForm.new_password}
+                onChangeText={v => setPwForm(f => ({ ...f, new_password: v }))}
+              />
+
+              <View style={styles.modalBtns}>
+                <TouchableOpacity onPress={() => setShowPwModal(false)} style={styles.modalBtnCancel}>
+                  <Text style={{ color: colors.white50, fontWeight: '600' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleChangePassword} disabled={loading} style={styles.modalBtnSubmit}>
+                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Update</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -151,4 +221,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)',
   },
   logoutText: { color: '#EF4444', fontWeight: '700', fontSize: 15 },
+  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', paddingHorizontal: 24 },
+  modalCard: { backgroundColor: colors.card, borderRadius: 20, padding: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: colors.light, marginBottom: 20 },
+  label: { fontSize: 13, color: colors.white50, marginBottom: 6, fontWeight: '500' },
+  input: {
+    backgroundColor: colors.dark, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+    color: colors.light, fontSize: 15,
+  },
+  modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 24, gap: 12 },
+  modalBtnCancel: { paddingVertical: 12, paddingHorizontal: 16 },
+  modalBtnSubmit: { backgroundColor: colors.blue, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12 },
 });

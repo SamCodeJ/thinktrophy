@@ -79,6 +79,9 @@ export default function GameTranscriptScreen({ navigation, route }) {
                 {result.score ?? 0} / {result.totalQuestions ?? 10}
               </Text>
               <Text style={styles.summaryScoreLabel}>Correct Answers</Text>
+              <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: 'monospace', marginBottom: 6 }}>
+                ID: {sessionId.substring(0, 8).toUpperCase()}
+              </Text>
               {result.completedAt && (
                 <Text style={styles.summaryDate}>
                   {format(new Date(result.completedAt), 'dd MMM yyyy · HH:mm')}

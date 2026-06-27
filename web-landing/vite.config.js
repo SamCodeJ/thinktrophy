@@ -9,4 +9,11 @@ export default defineConfig({
       '/api': { target: 'http://localhost:4000', changeOrigin: true },
     },
   },
+  // Same proxy as dev — otherwise `vite preview` calls /api on the preview server and gets 404.
+  preview: {
+    port: 4174,
+    proxy: {
+      '/api': { target: 'http://localhost:4000', changeOrigin: true },
+    },
+  },
 });

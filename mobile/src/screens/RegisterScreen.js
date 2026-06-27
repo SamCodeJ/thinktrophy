@@ -27,7 +27,9 @@ export default function RegisterScreen({ navigation }) {
     setLoading(true);
     try {
       const res = await register(form);
-      await signIn(res.data.accessToken, res.data.refreshToken, res.data.user);
+      Alert.alert('Success', res.data.message, [
+        { text: 'OK', onPress: () => navigation.navigate('Login') }
+      ]);
     } catch (err) {
       Alert.alert('Registration Failed', err?.error?.message || 'Please check your details and try again.');
     } finally {

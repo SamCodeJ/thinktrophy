@@ -8,8 +8,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
+import { PayWithFlutterwave } from 'flutterwave-react-native';
 import { colors } from '../utils/theme';
-import { getWallet, deposit, verifyPayment, withdraw } from '../api';
+import { getWallet, getProfile, deposit, verifyPayment, withdraw } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -51,33 +52,49 @@ export default function WalletScreen() {
     }, [])
   );
 
-  const { data, isLoading } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
-  const balance      = data?.data?.balance || 0;
-  const transactions = data?.data?.transactions || [];
+  const { data: walletData, isLoading } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
+  const { data: profileData } = useQuery({ queryKey: ['profile'], queryFn: getProfile });
+  
+  const balance      = walletData?.data?.balance || 0;
+  const transactions = walletData?.data?.transactions || [];
+  const userEmail    = profileData?.data?.email || 'user@example.com';
+  const userName     = profileData?.data?.username || 'User';
 
   const [depositModal, setDepositModal]   = useState(false);
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [depositAmount, setDepositAmount] = useState('');
   const [withdrawForm, setWithdrawForm]   = useState({ amount: '', account_number: '', account_name: '' });
+  
+  const [paymentRef, setPaymentRef] = useState(null);
+  const [showFlutterwave, setShowFlutterwave] = useState(false);
 
   const depositMut = useMutation({
     mutationFn: () => deposit({ amount: parseFloat(depositAmount) }),
     onSuccess: async (res) => {
       const ref = res.data.reference;
-      // Auto-verify (stub)
-      try {
-        await verifyPayment(ref);
-        qc.invalidateQueries({ queryKey: ['wallet'] });
-        qc.invalidateQueries({ queryKey: ['profile'] });
-        setDepositModal(false);
-        setDepositAmount('');
-        Alert.alert('Success', `₦${depositAmount} credited to your wallet!`);
-      } catch (e) {
-        Alert.alert('Deposit initiated', `Reference: ${ref}\nUse the verify endpoint to confirm.`);
-      }
+      setPaymentRef(ref);
+      setDepositModal(false);
+      setShowFlutterwave(true);
     },
     onError: e => Alert.alert('Error', e?.error?.message || 'Deposit failed'),
   });
+
+  const handleOnRedirect = async (data) => {
+    setShowFlutterwave(false);
+    if (data.status === 'successful') {
+      try {
+        await verifyPayment(data.transaction_id);
+        qc.invalidateQueries({ queryKey: ['wallet'] });
+        qc.invalidateQueries({ queryKey: ['profile'] });
+        setDepositAmount('');
+        Alert.alert('Success', `${fmt(parseFloat(depositAmount) || 0)} credited to your wallet!`);
+      } catch (e) {
+        Alert.alert('Verification Failed', 'Payment was successful but verification failed. Please contact support.');
+      }
+    } else {
+      Alert.alert('Payment Failed', 'Your payment was not successful.');
+    }
+  };
 
   const withdrawMut = useMutation({
     mutationFn: () => withdraw({
@@ -89,13 +106,32 @@ export default function WalletScreen() {
       },
     }),
     onSuccess: () => {
-      qc.invalidateQueries(['wallet']);
+      qc.invalidateQueries({ queryKey: ['wallet'] });
       setWithdrawModal(false);
       setWithdrawForm({ amount: '', account_number: '', account_name: '' });
       Alert.alert('Success', 'Withdrawal request submitted!');
     },
     onError: e => Alert.alert('Error', e?.error?.message || 'Withdrawal failed'),
   });
+
+  if (showFlutterwave && paymentRef) {
+    return (
+      <PayWithFlutterwave
+        onRedirect={handleOnRedirect}
+        options={{
+          tx_ref: paymentRef,
+          authorization: 'FLWPUBK_TEST-e35abe483f6a314d5769d6689cefbca6-X',
+          customer: {
+            email: userEmail,
+            name: userName
+          },
+          amount: parseFloat(depositAmount),
+          currency: 'NGN',
+          payment_options: 'card,ussd,banktransfer'
+        }}
+      />
+    );
+  }
 
   return (
     <LinearGradient colors={[colors.darker, colors.dark]} style={{ flex: 1 }}>
@@ -142,7 +178,7 @@ export default function WalletScreen() {
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>Deposit Funds</Text>
-              <Text style={styles.label}>Amount ($)</Text>
+              <Text style={styles.label}>Amount (₦)</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Enter amount"
@@ -158,7 +194,7 @@ export default function WalletScreen() {
                 style={{ marginTop: 16 }}
               >
                 <LinearGradient colors={[colors.blue, colors.teal]} style={styles.modalBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-                  {depositMut.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>Deposit</Text>}
+                  {depositMut.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>Proceed to Pay</Text>}
                 </LinearGradient>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setDepositModal(false)} style={styles.cancelBtn}>
@@ -174,7 +210,7 @@ export default function WalletScreen() {
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>Withdraw Funds</Text>
               {[
-                { key: 'amount',         label: 'Amount ($)',        keyboard: 'decimal-pad', placeholder: '0.00' },
+                { key: 'amount',         label: 'Amount (₦)',        keyboard: 'decimal-pad', placeholder: '0.00' },
                 { key: 'account_name',   label: 'Account Name',      keyboard: 'default',     placeholder: 'John Doe' },
                 { key: 'account_number', label: 'Account Number',    keyboard: 'numeric',     placeholder: '1234567890' },
               ].map(f => (

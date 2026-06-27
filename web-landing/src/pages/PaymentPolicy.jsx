@@ -110,7 +110,7 @@ export default function PaymentPolicy() {
               <p>Winnings are calculated based on performance:</p>
               <ul className="list-disc pl-6 space-y-2">
                 <li>10/10 correct answers → users get 2× of stake</li>
-                <li>9/10 correct → users get 1.5× of stake</li>
+                <li>9/10 correct → users get 0.5× of stake</li>
                 <li>8 or fewer correct → no payout</li>
               </ul>
 

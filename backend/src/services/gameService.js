@@ -2,6 +2,8 @@ const { query, getClient } = require('../db/connection');
 const { buildSessionQuestions, formatQuestionForClient, getQuestionById } = require('./questionService');
 const { signSessionToken, verifySessionToken } = require('../utils/jwt');
 const { AppError } = require('../middleware/errorHandler');
+const { sendActionEmail } = require('../utils/emailService');
+const { formatNaira } = require('../utils/formatNaira');
 
 async function getPlatformSettings() {
   const result = await query('SELECT key, value FROM platform_settings');
@@ -11,7 +13,8 @@ async function getPlatformSettings() {
     minStake:      parseFloat(s.min_stake      || '500.00'),
     maxStake:      parseFloat(s.max_stake      || '5000.00'),
     payoutPerfect: parseFloat(s.payout_perfect || '2.0'),
-    payoutNine:    parseFloat(s.payout_nine    || '1.5'),
+    payoutNine:    parseFloat(s.payout_nine    || '0.5'),
+    gameDuration:  parseInt(s.game_duration    || '60', 10),
   };
 }
 
@@ -20,9 +23,9 @@ async function createSession(userId, categoryIds, stakeAmount) {
   const settings = await getPlatformSettings();
 
   if (stakeAmount < settings.minStake)
-    throw new AppError(`Minimum stake is ₦${settings.minStake.toLocaleString()}`, 400, 'STAKE_TOO_LOW');
+    throw new AppError(`Minimum stake is ${formatNaira(settings.minStake)}`, 400, 'STAKE_TOO_LOW');
   if (stakeAmount > settings.maxStake)
-    throw new AppError(`Maximum stake is ₦${settings.maxStake.toLocaleString()}`, 400, 'STAKE_TOO_HIGH');
+    throw new AppError(`Maximum stake is ${formatNaira(settings.maxStake)}`, 400, 'STAKE_TOO_HIGH');
 
   const client = await getClient();
   try {
@@ -46,13 +49,15 @@ async function createSession(userId, categoryIds, stakeAmount) {
     if (existing.rows.length > 0)
       throw new AppError('You already have an active game session', 409, 'SESSION_ACTIVE');
 
-    // Check wallet balance
+    // Check wallet balance and email verification
     const wallet = await client.query(
-      'SELECT wallet_balance FROM users WHERE id = $1 FOR UPDATE',
+      'SELECT username, email, wallet_balance, email_verified FROM users WHERE id = $1 FOR UPDATE',
       [userId]
     );
     if (!wallet.rows[0])
       throw new AppError('User not found', 404, 'NOT_FOUND');
+    if (!wallet.rows[0].email_verified)
+      throw new AppError('Please verify your email before playing', 403, 'EMAIL_NOT_VERIFIED');
     if (parseFloat(wallet.rows[0].wallet_balance) < stakeAmount)
       throw new AppError('Insufficient wallet balance', 400, 'INSUFFICIENT_BALANCE');
 
@@ -92,7 +97,8 @@ async function createSession(userId, categoryIds, stakeAmount) {
       sessionId,
       userId,
       startedAt: now.getTime(),
-    });
+      gameDuration: settings.gameDuration,
+    }, settings.gameDuration + 10);
 
     await client.query(
       'UPDATE game_sessions SET session_token = $1 WHERE id = $2',
@@ -113,12 +119,24 @@ async function createSession(userId, categoryIds, stakeAmount) {
     const firstQuestion = await getQuestionById(firstQuestionId);
     const firstMap = answerMaps.find(m => m.questionId === firstQuestionId);
 
+    // Send email notification (non-blocking)
+    const user = wallet.rows[0];
+    if (user && user.email) {
+      sendActionEmail(
+        user.email,
+        user.username,
+        'Game Session Started',
+        `You have successfully staked ₦${parseFloat(stakeAmount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} for a new game session. Your game ID is ${sessionId.substring(0, 8).toUpperCase()}. Good luck!`
+      ).catch(err => console.error('Failed to send staking email:', err));
+    }
+
     return {
       sessionId,
       sessionToken,
       questionNumber: 1,
       totalQuestions: 10,
       question: formatQuestionForClient(firstQuestion, firstMap),
+      gameDuration: settings.gameDuration,
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -142,9 +160,10 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
     throw new AppError('Session token mismatch', 403, 'FORBIDDEN');
   }
 
-  // Server-side timing check — must match GAME_SESSION_EXPIRY_SECONDS in .env
+  // Server-side timing check — includes a 10s grace period
   const elapsed = Date.now() - tokenData.startedAt;
-  const gracePeriodMs = parseInt(process.env.GAME_SESSION_EXPIRY_SECONDS || '110', 10) * 1000;
+  const gameDuration = tokenData.gameDuration || 60;
+  const gracePeriodMs = (gameDuration + 10) * 1000;
   if (elapsed > gracePeriodMs) {
     await expireSession(sessionId);
     throw new AppError('Game time expired', 400, 'TIME_EXPIRED');
@@ -217,12 +236,18 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
         [newIdx, newScore, JSON.stringify(answersSubmitted), payout, newActiveTrack, sessionId]
       );
 
+      let userEmail = null;
+      let userName = null;
+      
       // Credit payout
       if (payout > 0) {
-        await client.query(
-          'UPDATE users SET wallet_balance = wallet_balance + $1, total_won = total_won + $1 WHERE id = $2',
+        const uRes = await client.query(
+          'UPDATE users SET wallet_balance = wallet_balance + $1, total_won = total_won + $1 WHERE id = $2 RETURNING username, email',
           [payout, userId]
         );
+        userEmail = uRes.rows[0]?.email;
+        userName = uRes.rows[0]?.username;
+        
         await client.query(
           `INSERT INTO transactions (user_id, type, amount, status, game_session_id)
            VALUES ($1, 'payout', $2, 'verified', $3)`,
@@ -247,6 +272,17 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
       }
 
       await client.query('COMMIT');
+      
+      // Send winning email notification (non-blocking)
+      if (payout > 0 && userEmail) {
+        sendActionEmail(
+          userEmail,
+          userName,
+          'You Won on ThinkTrophy!',
+          `Congratulations! You scored ${newScore}/10 and won ₦${parseFloat(payout).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. The amount has been credited to your wallet.`
+        ).catch(err => console.error('Failed to send winning email:', err));
+      }
+
       return {
         gameComplete: true,
         score:        newScore,

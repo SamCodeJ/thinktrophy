@@ -73,15 +73,43 @@ const createCategorySchema = z.object({
   icon_name:   z.string().optional(),
 });
 
+const testimonialBodySchema = z.object({
+  author_name:   z.string().min(1).max(120),
+  author_title:  z.union([z.string().max(200), z.literal(''), z.null()]).optional(),
+  quote:         z.string().min(3).max(4000),
+  rating:        z.union([z.number().int().min(1).max(5), z.null()]).optional(),
+  sort_order:    z.number().int().min(0).max(99999).optional(),
+  is_active:     z.boolean().optional(),
+}).transform((d) => ({
+  ...d,
+  author_title: d.author_title === '' || d.author_title === undefined ? null : d.author_title,
+}));
+
 const settingsSchema = z.object({
   min_stake:        z.number().min(0.01).optional(),
   max_stake:        z.number().positive().optional(),
-  payout_perfect:   z.number().min(1).optional(),
-  payout_nine:      z.number().min(1).optional(),
+  payout_perfect:   z.number().min(0).optional(),
+  payout_nine:      z.number().min(0).optional(),
+  game_duration:    z.number().int().min(10).optional(),
   platform_name:    z.string().optional(),
   platform_tagline: z.string().optional(),
   kiosk_mode:       z.boolean().optional(),
   kiosk_warning_count: z.number().int().min(1).optional(),
+});
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  email: z.string().email(),
+  code: z.string().min(1, 'Reset code is required'),
+  new_password: z.string().min(8).regex(/[A-Z]/, 'Must contain uppercase').regex(/[0-9]/, 'Must contain a number'),
+});
+
+const updatePasswordSchema = z.object({
+  old_password: z.string().min(1, 'Old password is required'),
+  new_password: z.string().min(8).regex(/[A-Z]/, 'Must contain uppercase').regex(/[0-9]/, 'Must contain a number'),
 });
 
 function validate(schema) {
@@ -110,5 +138,9 @@ module.exports = {
   withdrawSchema,
   createQuestionSchema,
   createCategorySchema,
+  testimonialBodySchema,
   settingsSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  updatePasswordSchema,
 };

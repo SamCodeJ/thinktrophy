@@ -1,5 +1,29 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
+import * as Linking from 'expo-linking';
+
+const linking = {
+  prefixes: [Linking.createURL('/'), 'thinktrophy://'],
+  config: {
+    screens: {
+      Main: {
+        screens: {
+          Home: 'home',
+          Wallet: 'wallet',
+          Leaderboard: 'leaderboard',
+          Profile: 'profile',
+        }
+      },
+      CategorySelection: 'categories',
+      Game: 'game/:id',
+      Result: 'result/:id',
+      GameHistory: 'history',
+      GameTranscript: 'transcript/:id',
+      Auth: 'auth',
+      Onboarding: 'onboarding'
+    }
+  }
+};
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../store/authStore';
 import { View, ActivityIndicator } from 'react-native';
@@ -28,7 +52,7 @@ export default function AppNavigator() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer linking={linking}>
       <Root.Navigator screenOptions={{ headerShown: false }}>
         {isAuthenticated ? (
           <>

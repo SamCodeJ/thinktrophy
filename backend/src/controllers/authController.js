@@ -3,7 +3,7 @@ const bcrypt = require('bcrypt');
 const { query } = require('../db/connection');
 const { signAccessToken, signRefreshToken, verifyRefreshToken, signAdminToken } = require('../utils/jwt');
 const { AppError } = require('../middleware/errorHandler');
-const { sendVerificationEmail } = require('../utils/emailService');
+const { sendVerificationEmail, sendPasswordResetEmail, sendActionEmail } = require('../utils/emailService');
 
 const SALT_ROUNDS = 12;
 const VERIFICATION_EXPIRY_HOURS = 24;
@@ -78,8 +78,50 @@ async function login(req, res, next) {
 
     res.json({
       success: true,
-      data: { user: { id: user.id, username: user.username, email: user.email }, accessToken, refreshToken },
+      data: { user: { id: user.id, username: user.username, email: user.email, email_verified: user.email_verified }, accessToken, refreshToken },
     });
+  } catch (err) { next(err); }
+}
+
+async function forgotPassword(req, res, next) {
+  try {
+    const { email } = req.body;
+    const result = await query('SELECT id, username FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
+    if (user) {
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const hash = await bcrypt.hash(code, 8);
+      const expires = new Date(Date.now() + 15 * 60 * 1000);
+      await query('UPDATE users SET password_reset_code_hash = $1, password_reset_expires_at = $2 WHERE id = $3', [hash, expires, user.id]);
+      await sendPasswordResetEmail(email, user.username, code);
+    }
+    res.json({ success: true, data: { message: 'If that email exists, a reset code has been sent.' } });
+  } catch (err) { next(err); }
+}
+
+async function resetPassword(req, res, next) {
+  try {
+    const { email, code, new_password } = req.body;
+    const result = await query('SELECT id, username, password_reset_code_hash, password_reset_expires_at FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
+    if (!user || !user.password_reset_code_hash || new Date() > new Date(user.password_reset_expires_at)) {
+      throw new AppError('Invalid or expired reset code', 400, 'INVALID_CODE');
+    }
+    const match = await bcrypt.compare(code, user.password_reset_code_hash);
+    if (!match) throw new AppError('Invalid or expired reset code', 400, 'INVALID_CODE');
+
+    const passwordHash = await bcrypt.hash(new_password, SALT_ROUNDS);
+    await query('UPDATE users SET password_hash = $1, password_reset_code_hash = NULL, password_reset_expires_at = NULL WHERE id = $2', [passwordHash, user.id]);
+    
+    // Notify user of successful password reset
+    sendActionEmail(
+      email,
+      user.username,
+      'Password Reset Successfully',
+      'Your ThinkTrophy password has been successfully reset. You can now log in using your new password.'
+    ).catch(err => console.error('Failed to send password reset success email:', err));
+
+    res.json({ success: true, data: { message: 'Password reset successfully. You can now log in.' } });
   } catch (err) { next(err); }
 }
 
@@ -188,6 +230,32 @@ async function logout(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function updatePassword(req, res, next) {
+  try {
+    const { old_password, new_password } = req.body;
+    const result = await query('SELECT username, email, password_hash FROM users WHERE id = $1', [req.user.userId]);
+    const user = result.rows[0];
+    if (!user) throw new AppError('User not found', 404, 'NOT_FOUND');
+    const match = await bcrypt.compare(old_password, user.password_hash);
+    if (!match) throw new AppError('Incorrect old password', 400, 'INVALID_CREDENTIALS');
+
+    const passwordHash = await bcrypt.hash(new_password, SALT_ROUNDS);
+    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, req.user.userId]);
+    
+    // Notify user of successful password update
+    if (user.email) {
+      sendActionEmail(
+        user.email,
+        user.username,
+        'Password Changed Successfully',
+        'Your ThinkTrophy password was recently changed from your account settings. You can now use your new password to log in.'
+      ).catch(err => console.error('Failed to send password changed email:', err));
+    }
+
+    res.json({ success: true, data: { message: 'Password updated successfully.' } });
+  } catch (err) { next(err); }
+}
+
 async function adminLogin(req, res, next) {
   try {
     const { email, password } = req.body;
@@ -209,4 +277,70 @@ async function adminLogin(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { register, login, verifyEmail, resendVerification, refreshToken, logout, adminLogin };
+async function adminUpdatePassword(req, res, next) {
+  try {
+    const { old_password, new_password } = req.body;
+    const result = await query('SELECT name, email, password_hash FROM admins WHERE id = $1', [req.admin.adminId]);
+    const admin = result.rows[0];
+    if (!admin) throw new AppError('Admin not found', 404, 'NOT_FOUND');
+    const match = await bcrypt.compare(old_password, admin.password_hash);
+    if (!match) throw new AppError('Incorrect old password', 400, 'INVALID_CREDENTIALS');
+
+    const passwordHash = await bcrypt.hash(new_password, SALT_ROUNDS);
+    await query('UPDATE admins SET password_hash = $1 WHERE id = $2', [passwordHash, req.admin.adminId]);
+    
+    if (admin.email) {
+      sendActionEmail(
+        admin.email,
+        admin.name,
+        'Admin Password Changed Successfully',
+        'Your ThinkTrophy admin password was recently changed from your account settings. You can now use your new password to log in.'
+      ).catch(err => console.error('Failed to send admin password changed email:', err));
+    }
+
+    res.json({ success: true, data: { message: 'Password updated successfully.' } });
+  } catch (err) { next(err); }
+}
+
+async function adminForgotPassword(req, res, next) {
+  try {
+    const { email } = req.body;
+    const result = await query('SELECT id, name FROM admins WHERE email = $1', [email]);
+    const admin = result.rows[0];
+    if (admin) {
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const hash = await bcrypt.hash(code, 8);
+      const expires = new Date(Date.now() + 15 * 60 * 1000);
+      await query('UPDATE admins SET password_reset_code_hash = $1, password_reset_expires_at = $2 WHERE id = $3', [hash, expires, admin.id]);
+      await sendPasswordResetEmail(email, admin.name, code);
+    }
+    res.json({ success: true, data: { message: 'If that email exists, a reset code has been sent.' } });
+  } catch (err) { next(err); }
+}
+
+async function adminResetPassword(req, res, next) {
+  try {
+    const { email, code, new_password } = req.body;
+    const result = await query('SELECT id, name, password_reset_code_hash, password_reset_expires_at FROM admins WHERE email = $1', [email]);
+    const admin = result.rows[0];
+    if (!admin || !admin.password_reset_code_hash || new Date() > new Date(admin.password_reset_expires_at)) {
+      throw new AppError('Invalid or expired reset code', 400, 'INVALID_CODE');
+    }
+    const match = await bcrypt.compare(code, admin.password_reset_code_hash);
+    if (!match) throw new AppError('Invalid or expired reset code', 400, 'INVALID_CODE');
+
+    const passwordHash = await bcrypt.hash(new_password, SALT_ROUNDS);
+    await query('UPDATE admins SET password_hash = $1, password_reset_code_hash = NULL, password_reset_expires_at = NULL WHERE id = $2', [passwordHash, admin.id]);
+    
+    sendActionEmail(
+      email,
+      admin.name,
+      'Admin Password Reset Successfully',
+      'Your ThinkTrophy admin password has been successfully reset. You can now log in using your new password.'
+    ).catch(err => console.error('Failed to send admin password reset success email:', err));
+
+    res.json({ success: true, data: { message: 'Password reset successfully. You can now log in.' } });
+  } catch (err) { next(err); }
+}
+
+module.exports = { register, login, forgotPassword, resetPassword, updatePassword, verifyEmail, resendVerification, refreshToken, logout, adminLogin, adminForgotPassword, adminResetPassword, adminUpdatePassword };

@@ -7,6 +7,7 @@ const navLinks = [
   { label: 'Home',       href: '/#home' },
   { label: 'Features',   href: '/#features' },
   { label: 'How to Play',href: '/#how-it-works' },
+  { label: 'Reviews',    href: '/#testimonials' },
   { label: 'Download',   href: '/#download' },
 ];
 

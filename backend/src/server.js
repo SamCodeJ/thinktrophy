@@ -9,7 +9,7 @@ const userRoutes    = require('./routes/user');
 const paymentRoutes = require('./routes/payment');
 const gameRoutes    = require('./routes/game');
 const adminRoutes   = require('./routes/admin');
-const { getPublicSettings } = require('./controllers/adminController');
+const { getPublicSettings, getPublicTestimonials } = require('./controllers/adminController');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { apiLimiter }             = require('./middleware/rateLimiter');
 
@@ -33,8 +33,9 @@ app.use(express.urlencoded({ extended: true }));
 // ─── Health check ────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'ThinkTrophy API', ts: Date.now() }));
 
-// ─── Public app settings (no auth required) ──────────────────────────────────
+// ─── Public app / landing (no auth required) ────────────────────────────────
 app.get('/api/app/settings', getPublicSettings);
+app.get('/api/app/testimonials', getPublicTestimonials);
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use('/api',          apiLimiter);

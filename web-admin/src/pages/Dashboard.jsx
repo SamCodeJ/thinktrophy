@@ -2,15 +2,15 @@ import { useQuery } from '@tanstack/react-query';
 import { getDashboardStats } from '../api';
 import KPICard from '../components/KPICard';
 import {
-  DollarSign, TrendingUp, TrendingDown, Users, Gamepad2, Zap,
+  Wallet, TrendingUp, TrendingDown, Users, Gamepad2, Zap,
 } from 'lucide-react';
+import { formatNaira as fmt, formatNairaAxis } from '../utils/formatNaira';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { format, parseISO } from 'date-fns';
 
-const fmt = (n) => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
@@ -63,7 +63,7 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title="Total Staked"     value={fmt(kpis.totalStaked)}  icon={DollarSign}  color="blue"   gradient />
+        <KPICard title="Total Staked"     value={fmt(kpis.totalStaked)}  icon={Wallet}  color="blue"   gradient />
         <KPICard title="Total Payouts"    value={fmt(kpis.totalPayouts)} icon={TrendingDown} color="teal" />
         <KPICard title="Net Profit"       value={fmt(kpis.netProfit)}    icon={TrendingUp}  color="green" />
         <KPICard title="Total Users"      value={kpis.totalUsers?.toLocaleString() || 0} icon={Users} color="purple" />
@@ -81,7 +81,7 @@ export default function Dashboard() {
             <LineChart data={daily}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
               <XAxis dataKey="date" tick={{ fill: '#ffffff50', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#ffffff50', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `₦${v}`} />
+              <YAxis tick={{ fill: '#ffffff50', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatNairaAxis} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ color: '#ffffff80', fontSize: 12 }} />
               <Line type="monotone" dataKey="staked"  name="Staked"  stroke="#0984E3" strokeWidth={2} dot={false} />

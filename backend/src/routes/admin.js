@@ -2,7 +2,7 @@ const router = require('express').Router();
 const multer = require('multer');
 const ctrl   = require('../controllers/adminController');
 const { requireAdmin, requireModeratorOrAbove, requireSuperAdmin } = require('../middleware/auth');
-const { validate, createQuestionSchema, createCategorySchema, settingsSchema } = require('../utils/validators');
+const { validate, createQuestionSchema, createCategorySchema, testimonialBodySchema, settingsSchema } = require('../utils/validators');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -29,6 +29,12 @@ router.put('/categories/:id',           requireModeratorOrAbove, ctrl.updateCate
 router.delete('/categories/:id',        requireModeratorOrAbove, ctrl.deleteCategory);
 router.post('/categories/bulk-delete',  requireModeratorOrAbove, ctrl.bulkDeleteCategories);
 
+// Landing testimonials
+router.get('/testimonials',             ctrl.listTestimonials);
+router.post('/testimonials',            requireModeratorOrAbove, validate(testimonialBodySchema), ctrl.createTestimonial);
+router.put('/testimonials/:id',         requireModeratorOrAbove, validate(testimonialBodySchema), ctrl.updateTestimonial);
+router.delete('/testimonials/:id',      requireModeratorOrAbove, ctrl.deleteTestimonial);
+
 // Transactions
 router.get('/transactions',             ctrl.listTransactions);
 
@@ -44,6 +50,9 @@ router.get('/game-sessions/:id',        ctrl.getGameSessionDetail);
 // Settings
 router.get('/settings',                 ctrl.getSettings);
 router.put('/settings',                 requireModeratorOrAbove, validate(settingsSchema), ctrl.updateSettings);
+
+// Webhooks
+router.get('/webhooks',                 requireModeratorOrAbove, ctrl.getWebhookLogs);
 
 // Logs
 router.get('/logs',                     ctrl.getAdminLogs);

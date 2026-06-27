@@ -6,7 +6,7 @@ import { getGameSessions } from '../api';
 import DataTable from '../components/DataTable';
 import { format } from 'date-fns';
 
-const fmt = n => `₦${parseFloat(n || 0).toFixed(2)}`;
+import { formatNaira as fmt } from '../utils/formatNaira';
 
 export default function GameSessions() {
   const navigate = useNavigate();
@@ -18,6 +18,7 @@ export default function GameSessions() {
   });
 
   const columns = [
+    { key: 'id',             header: 'ID',       render: v => <span className="text-white/50 font-mono text-xs uppercase">{v.substring(0, 8)}</span> },
     { key: 'username',       header: 'User',     render: v => <span className="font-medium text-white">{v}</span> },
     { key: 'stake_amount',   header: 'Stake',    render: v => <span className="font-bold text-yellow-400">{fmt(v)}</span> },
     { key: 'score',          header: 'Score',    render: v => (
@@ -37,8 +38,8 @@ export default function GameSessions() {
     { key: 'duration_seconds', header: 'Duration', render: v => <span className="text-white/40">{v ? `${v}s` : '—'}</span> },
     { key: 'started_at',     header: 'Date',     render: v => <span className="text-white/40 text-xs">{v ? format(new Date(v), 'MMM d, HH:mm') : '—'}</span> },
     {
-      key: 'id', header: '', sortable: false, render: (id) => (
-        <button onClick={() => navigate(`/game-sessions/${id}`)} className="p-1.5 rounded-lg bg-white/5 hover:bg-brand-blue/20 text-white/40 hover:text-brand-blue transition-colors">
+      key: 'actions', header: '', sortable: false, render: (_, row) => (
+        <button onClick={() => navigate(`/game-sessions/${row.id}`)} className="p-1.5 rounded-lg bg-white/5 hover:bg-brand-blue/20 text-white/40 hover:text-brand-blue transition-colors">
           <Eye size={14} />
         </button>
       )

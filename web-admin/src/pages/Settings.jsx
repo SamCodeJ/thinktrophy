@@ -13,7 +13,7 @@ export default function Settings() {
   const { data, isLoading } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
   const [form, setForm] = useState({
     min_stake: '', max_stake: '', payout_perfect: '',
-    payout_nine: '', platform_name: '', platform_tagline: '',
+    payout_nine: '', game_duration: '', platform_name: '', platform_tagline: '',
     kiosk_mode: false, kiosk_warning_count: 1,
   });
 
@@ -24,7 +24,8 @@ export default function Settings() {
         min_stake:            s.min_stake            || '200',
         max_stake:            s.max_stake            || '50000',
         payout_perfect:       s.payout_perfect       || '2.0',
-        payout_nine:          s.payout_nine          || '1.5',
+        payout_nine:          s.payout_nine          || '0.5',
+        game_duration:        s.game_duration        || '60',
         platform_name:        s.platform_name        || 'ThinkTrophy',
         platform_tagline:     s.platform_tagline     || 'Think Sharp. Win Big.',
         kiosk_mode:           s.kiosk_mode === 'true',
@@ -39,6 +40,7 @@ export default function Settings() {
       max_stake:           parseFloat(form.max_stake),
       payout_perfect:      parseFloat(form.payout_perfect),
       payout_nine:         parseFloat(form.payout_nine),
+      game_duration:       parseInt(form.game_duration, 10),
       platform_name:       form.platform_name,
       platform_tagline:    form.platform_tagline,
       kiosk_mode:          form.kiosk_mode,
@@ -80,12 +82,12 @@ export default function Settings() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm text-white/60 mb-1.5">10/10 Perfect Score Multiplier</label>
-              <input className="input" type="number" min="1" step="0.1" value={form.payout_perfect} onChange={e => set('payout_perfect', e.target.value)} />
+              <input className="input" type="number" min="0" step="0.1" value={form.payout_perfect} onChange={e => set('payout_perfect', e.target.value)} />
               <p className="text-xs text-white/30 mt-1">Player wins stake × {form.payout_perfect}</p>
             </div>
             <div>
               <label className="block text-sm text-white/60 mb-1.5">9/10 Score Multiplier</label>
-              <input className="input" type="number" min="1" step="0.1" value={form.payout_nine} onChange={e => set('payout_nine', e.target.value)} />
+              <input className="input" type="number" min="0" step="0.1" value={form.payout_nine} onChange={e => set('payout_nine', e.target.value)} />
               <p className="text-xs text-white/30 mt-1">Player wins stake × {form.payout_nine}</p>
             </div>
           </div>
@@ -93,6 +95,17 @@ export default function Settings() {
             <p className="text-xs text-brand-blue/80">
               ℹ️ Scores of 8/10 or below result in a full stake loss with no payout.
             </p>
+          </div>
+        </div>
+
+        <div className="border-t border-white/5 pt-6">
+          <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider mb-4">Game Session</h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">Game Duration (Seconds)</label>
+              <input className="input" type="number" min="10" step="1" value={form.game_duration} onChange={e => set('game_duration', e.target.value)} />
+              <p className="text-xs text-white/30 mt-1">How much total time the player has to complete all 10 questions</p>
+            </div>
           </div>
         </div>
 

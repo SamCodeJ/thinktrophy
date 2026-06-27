@@ -3,8 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getTransactions } from '../api';
 import DataTable from '../components/DataTable';
 import { format } from 'date-fns';
-
-const fmt = n => `₦${parseFloat(n || 0).toFixed(2)}`;
+import { formatNaira as fmt } from '../utils/formatNaira';
 
 export default function Transactions() {
   const [filters, setFilters] = useState({ type: '', status: '', from: '', to: '', page: 1, limit: 20 });

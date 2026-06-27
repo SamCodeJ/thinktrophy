@@ -1,10 +1,12 @@
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Trophy, Download, Zap, Shield, Users, Star,
   ChevronRight, Check, BookOpen, Brain, Globe2,
   Cpu, Music, FlaskConical, Landmark, Heart,
-  ArrowRight, Smartphone, Play,
+  ArrowRight, Smartphone, Play, Quote,
 } from 'lucide-react';
+import { fetchPublicTestimonials } from '../api/testimonials';
 
 /* ─── Data ─────────────────────────────────────────────────────────────── */
 
@@ -107,7 +109,41 @@ function SectionLabel({ children }) {
 
 /* ─── Page ──────────────────────────────────────────────────────────────── */
 
+function TestimonialStars({ value }) {
+  if (value == null || value < 1) return null;
+  return (
+    <div className="flex gap-0.5 mt-3">
+      {Array.from({ length: value }, (_, i) => (
+        <Star key={i} size={14} className="text-yellow-400 fill-yellow-400" />
+      ))}
+    </div>
+  );
+}
+
 export default function Home() {
+  const [testimonials, setTestimonials] = useState([]);
+  const [testimonialsLoading, setTestimonialsLoading] = useState(true);
+  const [testimonialsError, setTestimonialsError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTestimonialsError(false);
+    fetchPublicTestimonials()
+      .then(rows => {
+        if (!cancelled) setTestimonials(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTestimonials([]);
+          setTestimonialsError(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTestimonialsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <>
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
@@ -327,6 +363,64 @@ export default function Home() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ── Testimonials ─────────────────────────────────────────────────── */}
+      <section id="testimonials" className="py-24">
+        <div className="section">
+          <div className="text-center mb-14">
+            <SectionLabel><Quote size={12} /> Loved by players</SectionLabel>
+            <h2 className="text-4xl sm:text-5xl font-black text-brand-dark dark:text-white mt-2">
+              What people are <span className="gradient-text">saying</span>
+            </h2>
+            <p className="text-slate-500 dark:text-white/50 mt-4 max-w-xl mx-auto">
+              Real feedback from the ThinkTrophy community.
+            </p>
+          </div>
+
+          {testimonialsLoading ? (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="card p-6 animate-pulse space-y-4">
+                  <div className="h-4 bg-slate-200 dark:bg-white/10 rounded w-3/4" />
+                  <div className="h-3 bg-slate-200 dark:bg-white/10 rounded w-full" />
+                  <div className="h-3 bg-slate-200 dark:bg-white/10 rounded w-5/6" />
+                  <div className="h-10 bg-slate-200 dark:bg-white/10 rounded w-1/3 mt-4" />
+                </div>
+              ))}
+            </div>
+          ) : testimonialsError ? (
+            <p className="text-center text-sm text-slate-500 dark:text-white/45 max-w-lg mx-auto">
+              We could not load reviews right now. If you are running the site locally, start the API
+              on port 4000 or set <code className="text-xs bg-slate-100 dark:bg-white/10 px-1.5 py-0.5 rounded">VITE_API_URL</code> to your backend URL.
+            </p>
+          ) : testimonials.length === 0 ? (
+            <p className="text-center text-sm text-slate-500 dark:text-white/45 max-w-lg mx-auto">
+              Player reviews will appear here once they are added in the admin portal.
+            </p>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {testimonials.map(t => (
+                <article
+                  key={t.id}
+                  className="card p-6 flex flex-col border-slate-100 dark:border-white/5 hover:shadow-md dark:hover:border-white/10 transition-all"
+                >
+                  <Quote size={22} className="text-brand-blue/40 dark:text-brand-teal/50 flex-shrink-0 mb-3" />
+                  <p className="text-slate-600 dark:text-white/70 leading-relaxed flex-1 text-sm sm:text-base">
+                    “{t.quote}”
+                  </p>
+                  <TestimonialStars value={t.rating} />
+                  <footer className="mt-5 pt-4 border-t border-slate-100 dark:border-white/10">
+                    <p className="font-bold text-brand-dark dark:text-white">{t.author_name}</p>
+                    {t.author_title && (
+                      <p className="text-xs text-slate-400 dark:text-white/40 mt-0.5">{t.author_title}</p>
+                    )}
+                  </footer>
+                </article>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

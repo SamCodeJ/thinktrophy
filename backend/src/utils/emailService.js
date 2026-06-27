@@ -42,9 +42,6 @@ async function sendVerificationEmail(to, username, token) {
           <p style="color:#888;font-size:13px;">
             If you didn't create an account, you can safely ignore this email.
           </p>
-          <p style="color:#aaa;font-size:12px;word-break:break-all;">
-            Or copy this link into your browser:<br/>${verifyUrl}
-          </p>
         </div>
       </div>
     `,
@@ -52,4 +49,64 @@ async function sendVerificationEmail(to, username, token) {
   });
 }
 
-module.exports = { sendVerificationEmail };
+async function sendPasswordResetEmail(to, name, otp) {
+  await transporter.sendMail({
+    from: `"ThinkTrophy" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    to,
+    subject: 'Reset your ThinkTrophy password',
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f9f9f9;border-radius:8px;overflow:hidden;">
+        <div style="background:#1a1a2e;padding:32px 24px;text-align:center;">
+          <h1 style="color:#e94560;margin:0;font-size:28px;letter-spacing:1px;">ThinkTrophy</h1>
+        </div>
+        <div style="padding:32px 24px;">
+          <h2 style="color:#1a1a2e;margin-top:0;">Hi ${name},</h2>
+          <p style="color:#555;line-height:1.6;">
+            We received a request to reset the password for your ThinkTrophy account.
+            Enter the following 6-digit code to reset your password:
+          </p>
+          <div style="text-align:center;margin:32px 0;">
+            <span style="background:#e94560;color:#fff;padding:14px 32px;border-radius:6px;
+                         font-weight:bold;font-size:24px;letter-spacing:4px;display:inline-block;">
+              ${otp}
+            </span>
+          </div>
+          <p style="color:#555;line-height:1.6;">
+            This code will expire in <strong>15 minutes</strong>.
+          </p>
+          <p style="color:#888;font-size:13px;">
+            If you didn't request a password reset, you can safely ignore this email.
+          </p>
+        </div>
+      </div>
+    `,
+    text: `Hi ${name},\n\nYour password reset code is: ${otp}\n\nThis code expires in 15 minutes.\n\nIf you didn't request this, please ignore this email.`,
+  });
+}
+
+async function sendActionEmail(to, name, subject, message) {
+  await transporter.sendMail({
+    from: `"ThinkTrophy" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    to,
+    subject,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f9f9f9;border-radius:8px;overflow:hidden;">
+        <div style="background:#1a1a2e;padding:32px 24px;text-align:center;">
+          <h1 style="color:#e94560;margin:0;font-size:28px;letter-spacing:1px;">ThinkTrophy</h1>
+        </div>
+        <div style="padding:32px 24px;">
+          <h2 style="color:#1a1a2e;margin-top:0;">Hi ${name},</h2>
+          <p style="color:#555;line-height:1.6;font-size:16px;">
+            ${message}
+          </p>
+          <p style="color:#888;font-size:13px;margin-top:32px;">
+            If you did not authorize this action, please contact support immediately.
+          </p>
+        </div>
+      </div>
+    `,
+    text: `Hi ${name},\n\n${message}\n\nIf you did not authorize this action, please contact support immediately.`,
+  });
+}
+
+module.exports = { sendVerificationEmail, sendPasswordResetEmail, sendActionEmail };

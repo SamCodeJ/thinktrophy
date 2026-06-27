@@ -13,11 +13,10 @@ import { colors } from '../utils/theme';
 import { useKiosk } from '../store/kioskStore';
 
 const { width } = Dimensions.get('window');
-const TOTAL_TIME = 100;
 const FEEDBACK_DELAY = 800;
 
-function TimerRing({ timeLeft }) {
-  const progress = timeLeft / TOTAL_TIME;
+function TimerRing({ timeLeft, totalTime }) {
+  const progress = timeLeft / totalTime;
   const isUrgent = timeLeft <= 10;
   const size = 70;
   const radius = 28;
@@ -69,7 +68,9 @@ function AnswerOption({ option, status, onPress, disabled }) {
 }
 
 export default function GameScreen({ navigation, route }) {
-  const { sessionId, sessionToken: initToken, firstQuestion, questionNumber: initNum } = route.params;
+  const { sessionId, sessionToken: initToken, firstQuestion, questionNumber: initNum, gameDuration } = route.params;
+
+  const TOTAL_TIME = gameDuration || 60;
 
   const [question, setQuestion]         = useState(firstQuestion);
   const [questionNum, setQuestionNum]   = useState(initNum || 1);
@@ -229,7 +230,7 @@ export default function GameScreen({ navigation, route }) {
       <SafeAreaView style={{ flex: 1 }}>
         {/* Top bar — timer + question number only, no live score */}
         <View style={styles.topBar}>
-          <TimerRing timeLeft={timeLeft} />
+          <TimerRing timeLeft={timeLeft} totalTime={TOTAL_TIME} />
           <Text style={styles.qNumText}>Question {questionNum} / 10</Text>
           {/* Empty view keeps the timer centered */}
           <View style={{ width: 70 }} />

@@ -713,6 +713,104 @@ async function getGameSessionDetail(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// ─── Testimonials (landing page) ─────────────────────────────────────────────
+async function getPublicTestimonials(req, res, next) {
+  try {
+    const result = await query(
+      `SELECT id, author_name, author_title, quote, rating, sort_order, created_at
+       FROM testimonials
+       WHERE is_active = TRUE
+       ORDER BY sort_order ASC, created_at DESC`
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) { next(err); }
+}
+
+async function listTestimonials(req, res, next) {
+  try {
+    const result = await query(
+      `SELECT id, author_name, author_title, quote, rating, sort_order, is_active, created_at, updated_at
+       FROM testimonials
+       ORDER BY sort_order ASC, created_at DESC`
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) { next(err); }
+}
+
+async function createTestimonial(req, res, next) {
+  try {
+    const { author_name, author_title, quote, rating, sort_order, is_active } = req.body;
+    const result = await query(
+      `INSERT INTO testimonials (author_name, author_title, quote, rating, sort_order, is_active)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [author_name, author_title ?? null, quote, rating ?? null, sort_order ?? 0, is_active ?? true]
+    );
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'CREATE_TESTIMONIAL',
+      entity: 'testimonial',
+      entityId: result.rows[0].id,
+      details: { author_name },
+      ipAddress: req.ip
+    });
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (err) { next(err); }
+}
+
+async function updateTestimonial(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { author_name, author_title, quote, rating, sort_order, is_active } = req.body;
+    const result = await query(
+      `UPDATE testimonials SET
+         author_name = $1,
+         author_title = $2,
+         quote = $3,
+         rating = $4,
+         sort_order = $5,
+         is_active = $6,
+         updated_at = NOW()
+       WHERE id = $7 RETURNING *`,
+      [author_name, author_title ?? null, quote, rating ?? null, sort_order ?? 0, is_active ?? true, id]
+    );
+    if (!result.rows[0]) throw new AppError('Testimonial not found', 404, 'NOT_FOUND');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'UPDATE_TESTIMONIAL',
+      entity: 'testimonial',
+      entityId: id,
+      details: { author_name },
+      ipAddress: req.ip
+    });
+
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) { next(err); }
+}
+
+async function deleteTestimonial(req, res, next) {
+  try {
+    const { id } = req.params;
+    const result = await query(
+      `UPDATE testimonials SET is_active = FALSE, updated_at = NOW() WHERE id = $1 RETURNING id`,
+      [id]
+    );
+    if (!result.rows[0]) throw new AppError('Testimonial not found', 404, 'NOT_FOUND');
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'DELETE_TESTIMONIAL',
+      entity: 'testimonial',
+      entityId: id,
+      ipAddress: req.ip
+    });
+
+    res.json({ success: true, data: { message: 'Testimonial hidden from landing page' } });
+  } catch (err) { next(err); }
+}
+
 // ─── Settings ────────────────────────────────────────────────────────────────
 const PUBLIC_SETTING_KEYS = ['kiosk_mode', 'kiosk_warning_count', 'platform_name', 'platform_tagline'];
 
@@ -864,11 +962,26 @@ async function updateAdminRole(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getWebhookLogs(req, res, next) {
+  try {
+    const result = await query(
+      `SELECT id, provider, event_type, status, error_message, created_at, payload
+       FROM webhook_logs
+       ORDER BY created_at DESC
+       LIMIT 100`
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   getDashboardStats, getStatistics,
   listQuestions, createQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions, bulkDeleteQuestions,
   listAdminCategories, createCategory, updateCategory, deleteCategory, bulkDeleteCategories,
   listTransactions, listUsers, getUserDetail, updateUserStatus,
-  listGameSessions, getGameSessionDetail, getSettings, updateSettings, getPublicSettings,
+  listGameSessions, getGameSessionDetail,
+  getPublicTestimonials, listTestimonials, createTestimonial, updateTestimonial, deleteTestimonial,
+  getSettings, updateSettings, getPublicSettings,
   getAdminLogs, listAdmins, createAdmin, updateAdminRole,
+  getWebhookLogs,
 };

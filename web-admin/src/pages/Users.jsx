@@ -8,7 +8,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { useAuth } from '../hooks/useAuth';
 
-const fmt = n => `₦${parseFloat(n || 0).toFixed(2)}`;
+import { formatNaira as fmt } from '../utils/formatNaira';
 
 export default function Users() {
   const qc = useQueryClient();

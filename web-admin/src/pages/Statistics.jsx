@@ -3,10 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { getStatistics } from '../api';
 import KPICard from '../components/KPICard';
 import {
-  DollarSign, TrendingUp, TrendingDown, Users, Gamepad2,
+  TrendingUp, TrendingDown, Users, Gamepad2,
   HelpCircle, Target, Clock, Award, BarChart2, ArrowUpRight,
   CheckCircle, XCircle, AlertCircle, Wallet,
 } from 'lucide-react';
+import { formatNaira as fmt, formatNairaAxis, formatNairaShort as fmtSm } from '../utils/formatNaira';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -14,8 +15,6 @@ import {
 } from 'recharts';
 import { format, parseISO } from 'date-fns';
 
-const fmt   = (n) => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
-const fmtSm = (n) => `₦${parseFloat(n || 0).toLocaleString('en-NG', { maximumFractionDigits: 0 })}`;
 const pct   = (n) => `${parseFloat(n || 0).toFixed(1)}%`;
 
 const PERIODS = [
@@ -166,11 +165,11 @@ export default function Statistics() {
 
       {/* ── Financial Overview ─────────────────────────────────── */}
       <section>
-        <SectionTitle icon={DollarSign} title="Financial Overview" subtitle="Revenue, payouts and deposits" />
+        <SectionTitle icon={Wallet} title="Financial Overview" subtitle="Revenue, payouts and deposits" />
         {isLoading ? <SkeletonGrid count={4} /> : (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <KPICard title="Total Staked"    value={fmt(fin.total_staked)}    icon={DollarSign}   color="blue" gradient />
+              <KPICard title="Total Staked"    value={fmt(fin.total_staked)}    icon={Wallet}   color="blue" gradient />
               <KPICard title="Total Payouts"   value={fmt(fin.total_payouts)}   icon={TrendingDown} color="teal" />
               <KPICard title="Net Profit"      value={fmt(fin.netProfit)}       icon={TrendingUp}   color="green" />
               <KPICard title="Profit Margin"   value={`${fin.profitMargin || 0}%`} icon={Target}    color="purple" />
@@ -201,7 +200,7 @@ export default function Statistics() {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                     <XAxis dataKey="date" tick={{ fill: '#ffffff50', fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: '#ffffff50', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `₦${v}`} />
+                    <YAxis tick={{ fill: '#ffffff50', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatNairaAxis} />
                     <Tooltip content={<CustomTooltip />} />
                     <Legend wrapperStyle={{ color: '#ffffff80', fontSize: 12 }} />
                     <Area type="monotone" dataKey="staked"   name="Staked"   stroke="#0984E3" fill="url(#gStaked)"   strokeWidth={2} dot={false} />
@@ -259,7 +258,7 @@ export default function Statistics() {
               <KPICard title="New (Last 30d)"   value={usr.new_last_30d || 0}                    icon={ArrowUpRight} color="purple" />
               <KPICard title="Avg Games/User"   value={usr.avg_games_per_user || 0}              icon={Gamepad2}     color="yellow" />
               <KPICard title="Avg Wallet Bal."  value={fmt(usr.avg_wallet_balance)}              icon={Wallet}       color="teal" />
-              <KPICard title="Total Wallet Bal." value={fmt(usr.total_wallet_balance)}           icon={DollarSign}   color="blue" />
+              <KPICard title="Total Wallet Bal." value={fmt(usr.total_wallet_balance)}           icon={Wallet}   color="blue" />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -320,7 +319,7 @@ export default function Statistics() {
               <KPICard title="Completion Rate"  value={`${gm.completionRate || 0}%`}              icon={Target}      color="teal" />
               <KPICard title="Active Now"       value={gm.active || 0}                            icon={Gamepad2}    color="yellow" />
               <KPICard title="Avg Score"        value={gm.avg_score || 0}                         icon={Award}       color="purple" />
-              <KPICard title="Avg Stake"        value={fmt(gm.avg_stake)}                         icon={DollarSign}  color="blue" />
+              <KPICard title="Avg Stake"        value={fmt(gm.avg_stake)}                         icon={Wallet}  color="blue" />
               <KPICard title="Avg Payout"       value={fmt(gm.avg_payout)}                        icon={TrendingUp}  color="green" />
               <KPICard title="Avg Duration"     value={gm.avg_duration_seconds ? `${Math.round(gm.avg_duration_seconds / 60)}m` : '—'} icon={Clock} color="teal" />
             </div>

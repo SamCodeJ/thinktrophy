@@ -4,7 +4,7 @@ import { ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
 import { getGameSessionDetail } from '../api';
 import { format, differenceInSeconds } from 'date-fns';
 
-const fmt = n => `₦${parseFloat(n || 0).toFixed(2)}`;
+import { formatNaira as fmt } from '../utils/formatNaira';
 
 export default function GameSessionDetail() {
   const { id } = useParams();
@@ -31,7 +31,7 @@ export default function GameSessionDetail() {
         <div className="flex items-start justify-between flex-wrap gap-4">
           <div>
             <h1 className="text-xl font-bold text-white">Session Details</h1>
-            <p className="text-white/30 text-xs mt-1 font-mono">{session.id}</p>
+            <p className="text-white/40 text-xs mt-1 font-mono uppercase">ID: <span className="text-white/60">{session.id}</span></p>
             <div className="flex items-center gap-3 mt-3 flex-wrap">
               <span className="text-white/60">Player: <span className="text-white font-semibold">{session.username}</span></span>
               <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${

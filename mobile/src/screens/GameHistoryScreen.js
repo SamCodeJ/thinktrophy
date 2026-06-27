@@ -33,11 +33,16 @@ function SessionRow({ session, onPress }) {
 
       {/* Middle — date + status */}
       <View style={styles.rowMid}>
-        <Text style={styles.rowDate}>
-          {date ? format(new Date(date), 'dd MMM yyyy · HH:mm') : 'In progress'}
-        </Text>
-        <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18` }]}>
-          <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 6 }}>
+          <Text style={styles.rowDate}>
+            {date ? format(new Date(date), 'dd MMM yyyy · HH:mm') : 'In progress'}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={[styles.statusBadge, { backgroundColor: `${statusColor}18` }]}>
+            <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+          </View>
+          <Text style={{ fontSize: 10, color: colors.white30, fontFamily: 'monospace' }}>ID: {session.id.substring(0, 8).toUpperCase()}</Text>
         </View>
       </View>
 

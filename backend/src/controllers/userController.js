@@ -5,7 +5,7 @@ async function getProfile(req, res, next) {
   try {
     const result = await query(
       `SELECT id, username, email, phone_number, wallet_balance,
-              total_games_played, total_won, total_staked, created_at
+              total_games_played, total_won, total_staked, email_verified, created_at
        FROM users WHERE id = $1`,
       [req.user.userId]
     );

@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, HelpCircle, Tag, CreditCard,
-  Users, Gamepad2, Settings, ChevronLeft, BarChart2, FileText, Shield
+  Users, Gamepad2, Settings, ChevronLeft, BarChart2, FileText, Shield, MessageSquareQuote,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -9,11 +9,13 @@ const navItems = [
   { to: '/',              icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/questions',     icon: HelpCircle,      label: 'Questions' },
   { to: '/categories',    icon: Tag,             label: 'Categories' },
+  { to: '/testimonials',  icon: MessageSquareQuote, label: 'Testimonials' },
   { to: '/transactions',  icon: CreditCard,      label: 'Transactions' },
   { to: '/users',         icon: Users,           label: 'Users' },
   { to: '/game-sessions', icon: Gamepad2,        label: 'Game Sessions' },
   { to: '/statistics',    icon: BarChart2,       label: 'Statistics' },
   { to: '/logs',          icon: FileText,        label: 'Logs' },
+  { to: '/webhooks',      icon: FileText,        label: 'Webhooks' },
   { to: '/admins',        icon: Shield,          label: 'Admins' },
   { to: '/settings',      icon: Settings,        label: 'Settings' },
 ];

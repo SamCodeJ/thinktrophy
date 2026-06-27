@@ -60,11 +60,11 @@ function verifyRefreshToken(token) {
   });
 }
 
-// ─── Game session token (110 seconds = 100s game + 10s grace) ──────────────
-function signSessionToken(payload) {
+// ─── Game session token ──────────────
+function signSessionToken(payload, expirySeconds) {
   const algo    = getAlgorithm();
   const key     = getPrivateKey();
-  const expiry  = parseInt(process.env.GAME_SESSION_EXPIRY_SECONDS || '110', 10);
+  const expiry  = expirySeconds || parseInt(process.env.GAME_SESSION_EXPIRY_SECONDS || '110', 10);
   return jwt.sign(payload, key, {
     algorithm: algo,
     expiresIn: expiry,

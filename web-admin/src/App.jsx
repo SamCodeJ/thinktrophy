@@ -13,8 +13,10 @@ import GameSessionDetail from './pages/GameSessionDetail';
 import Settings from './pages/Settings';
 import Statistics from './pages/Statistics';
 import Logs from './pages/Logs';
+import WebhookLogs from './pages/WebhookLogs';
 
 import Admins from './pages/Admins';
+import Testimonials from './pages/Testimonials';
 
 function ProtectedRoutes() {
   const { isAuthenticated } = useAuth();
@@ -25,6 +27,7 @@ function ProtectedRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="questions"          element={<Questions />} />
         <Route path="categories"         element={<Categories />} />
+        <Route path="testimonials"       element={<Testimonials />} />
         <Route path="transactions"       element={<Transactions />} />
         <Route path="users"              element={<Users />} />
         <Route path="users/:id"          element={<UserDetail />} />
@@ -33,6 +36,7 @@ function ProtectedRoutes() {
         <Route path="settings"           element={<Settings />} />
         <Route path="statistics"         element={<Statistics />} />
         <Route path="logs"               element={<Logs />} />
+        <Route path="webhooks"           element={<WebhookLogs />} />
         <Route path="admins"             element={<Admins />} />
       </Route>
     </Routes>
