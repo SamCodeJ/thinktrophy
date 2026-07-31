@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
@@ -6,15 +6,37 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 import { colors } from '../utils/theme';
 import { login } from '../api';
 import { useAuth } from '../store/authStore';
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, route }) {
   const { signIn } = useAuth();
   const [form, setForm]       = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw]   = useState(false);
+
+  useEffect(() => {
+    if (route.params?.verified === 'true') {
+      Alert.alert('Verification Successful', 'Your email has been verified successfully. Please log in to continue.');
+      // Clear the params so the alert doesn't show again if the component re-renders
+      navigation.setParams({ verified: undefined });
+    } else if (route.params?.error === 'expired') {
+      Alert.alert('Verification Failed', 'The verification link has expired. Please request a new one.');
+      navigation.setParams({ error: undefined });
+    }
+  }, [route.params?.verified, route.params?.error]);
+
+  useEffect(() => {
+    async function loadSavedEmail() {
+      const savedEmail = await SecureStore.getItemAsync('saved_email');
+      if (savedEmail) {
+        setForm(f => ({ ...f, email: savedEmail }));
+      }
+    }
+    loadSavedEmail();
+  }, []);
 
   async function handleLogin() {
     if (!form.email || !form.password) {
@@ -24,6 +46,10 @@ export default function LoginScreen({ navigation }) {
     setLoading(true);
     try {
       const res = await login(form);
+      // Save credentials for biometric login
+      await SecureStore.setItemAsync('saved_email', form.email);
+      await SecureStore.setItemAsync('saved_password', form.password);
+      
       await signIn(res.data.accessToken, res.data.refreshToken, res.data.user);
     } catch (err) {
       Alert.alert('Login Failed', err?.error?.message || 'Invalid credentials. Please try again.');
@@ -39,12 +65,33 @@ export default function LoginScreen({ navigation }) {
       Alert.alert('Biometrics unavailable', 'Set up Face ID or fingerprint in your device settings.');
       return;
     }
+    
+    const savedEmail = await SecureStore.getItemAsync('saved_email');
+    const savedPassword = await SecureStore.getItemAsync('saved_password');
+    
+    if (!savedEmail || !savedPassword) {
+      Alert.alert('Biometric login', 'Please login with your password first to enable biometric login.');
+      return;
+    }
+
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage: 'Authenticate to sign in',
       fallbackLabel: 'Use Password',
     });
+    
     if (result.success) {
-      Alert.alert('Biometric login', 'Feature available after first login with password.');
+      setLoading(true);
+      try {
+        const res = await login({ email: savedEmail, password: savedPassword });
+        await signIn(res.data.accessToken, res.data.refreshToken, res.data.user);
+      } catch (err) {
+        Alert.alert('Login Failed', err?.error?.message || 'Invalid saved credentials. Please login with password again.');
+        // Clear invalid credentials
+        await SecureStore.deleteItemAsync('saved_email');
+        await SecureStore.deleteItemAsync('saved_password');
+      } finally {
+        setLoading(false);
+      }
     }
   }
 
@@ -73,7 +120,7 @@ export default function LoginScreen({ navigation }) {
                   placeholder="you@example.com"
                   placeholderTextColor={colors.white30}
                   value={form.email}
-                  onChangeText={v => setForm(f => ({ ...f, email: v }))}
+                  onChangeText={v => setForm(f => ({ ...f, email: v.trim() }))}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoComplete="email"

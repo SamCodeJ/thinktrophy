@@ -178,6 +178,8 @@ async function seed() {
       ['game_duration',   '60'],
       ['platform_name',   'ThinkTrophy'],
       ['platform_tagline','Think Sharp. Win Big.'],
+      ['referral_win_percentage', '0.10'],
+      ['user_win_tax_percentage', '0.05'],
     ];
     for (const [key, value] of defaults) {
       await client.query(`

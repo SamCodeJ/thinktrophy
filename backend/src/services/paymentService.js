@@ -4,6 +4,8 @@ const { v4: uuidv4 } = require('uuid');
 const { sendActionEmail } = require('../utils/emailService');
 const { formatNaira } = require('../utils/formatNaira');
 const axios = require('axios');
+// No need for a custom httpsAgent for Flutterwave, as it was working previously and causes EPROTO errors
+
 
 async function initiateDeposit(userId, amount) {
   const reference = `TT-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`;
@@ -21,44 +23,64 @@ async function initiateDeposit(userId, amount) {
   };
 }
 
-async function verifyDeposit(userId, transactionId) {
+async function verifyDeposit(userId, txRef) {
   const client = await getClient();
   try {
     await client.query('BEGIN');
 
-    // Call Flutterwave to verify the transaction
+    const txRes = await client.query(
+      `SELECT * FROM transactions WHERE reference = $1 AND user_id = $2 AND type = 'deposit' FOR UPDATE`,
+      [txRef, userId]
+    );
+    const tx = txRes.rows[0];
+    if (!tx) throw new AppError('Transaction not found', 404, 'NOT_FOUND');
+    if (tx.status === 'verified') {
+      const walletRes = await client.query(
+        'SELECT wallet_balance FROM users WHERE id = $1',
+        [userId]
+      );
+      await client.query('COMMIT');
+      return {
+        amount:     parseFloat(tx.amount),
+        newBalance: parseFloat(walletRes.rows[0].wallet_balance),
+        reference:  tx.reference,
+      };
+    }
+
+    if (!process.env.FLW_SECRET_KEY) {
+      throw new AppError('Payment gateway is not configured', 500, 'GATEWAY_ERROR');
+    }
+
+    // Verify with Flutterwave using our tx_ref (more reliable than redirect transaction_id)
     const flwRes = await axios.get(
-      `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`,
+      'https://api.flutterwave.com/v3/transactions/verify_by_reference',
       {
+        params: { tx_ref: txRef },
         headers: {
           Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-        },
+        }
       }
     );
 
+    if (flwRes.data.status !== 'success') {
+      throw new AppError('Unable to verify transaction with Flutterwave', 400, 'VERIFICATION_FAILED');
+    }
+
     const flwData = flwRes.data.data;
-    const reference = flwData.tx_ref;
 
     if (flwData.status !== 'successful') {
       throw new AppError('Transaction was not successful on Flutterwave', 400, 'TX_FAILED');
     }
 
-    const txRes = await client.query(
-      `SELECT * FROM transactions WHERE reference = $1 AND user_id = $2 AND type = 'deposit' FOR UPDATE`,
-      [reference, userId]
-    );
-    const tx = txRes.rows[0];
-    if (!tx) throw new AppError('Transaction not found', 404, 'NOT_FOUND');
-    if (tx.status === 'verified') throw new AppError('Transaction already verified', 400, 'ALREADY_VERIFIED');
-    
-    // Ensure the amount paid matches the amount initiated
-    if (flwData.amount < tx.amount) {
+    const paidAmount = parseFloat(flwData.amount);
+    const expectedAmount = parseFloat(tx.amount);
+    if (paidAmount < expectedAmount) {
       throw new AppError('Amount paid is less than initiated amount', 400, 'AMOUNT_MISMATCH');
     }
 
     await client.query(
       `UPDATE transactions SET status = 'verified', metadata = $1 WHERE id = $2`,
-      [JSON.stringify({ flw_id: transactionId }), tx.id]
+      [JSON.stringify({ flw_id: flwData.id, flw_ref: flwData.flw_ref }), tx.id]
     );
 
     await client.query(
@@ -72,6 +94,11 @@ async function verifyDeposit(userId, transactionId) {
     );
 
     await client.query('COMMIT');
+    
+    // Sync to Zoho Books asynchronously
+    const zohoService = require('./zohoService');
+    zohoService.syncDeposit(userId, tx.amount, tx.reference)
+      .catch(err => console.error('Failed to sync deposit to Zoho Books:', err));
     
     // Send email notification (non-blocking)
     const user = walletRes.rows[0];
@@ -104,8 +131,12 @@ async function requestWithdrawal(userId, amount, accountDetails) {
   );
   const user = walletRes.rows[0];
   const balance = parseFloat(user.wallet_balance);
+  const withdrawalFee = parseFloat(process.env.WITHDRAWAL_FEE || '50');
+  
   if (amount > balance) throw new AppError('Insufficient balance', 400, 'INSUFFICIENT_BALANCE');
-  if (amount < 1) throw new AppError(`Minimum withdrawal is ${formatNaira(1)}`, 400, 'AMOUNT_TOO_LOW');
+  if (amount <= withdrawalFee) throw new AppError(`Minimum withdrawal must be greater than the ${formatNaira(withdrawalFee)} fee`, 400, 'AMOUNT_TOO_LOW');
+
+  const transferAmount = amount - withdrawalFee;
 
   const client = await getClient();
   try {
@@ -126,7 +157,7 @@ async function requestWithdrawal(userId, amount, accountDetails) {
         {
           account_bank: accountDetails.bank_code || '044', // Default to Access Bank for testing if not provided
           account_number: accountDetails.account_number,
-          amount: amount,
+          amount: transferAmount,
           narration: 'ThinkTrophy Withdrawal',
           currency: 'NGN',
           reference: reference,
@@ -136,7 +167,7 @@ async function requestWithdrawal(userId, amount, accountDetails) {
         {
           headers: {
             Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-          },
+          }
         }
       );
       flwTransferId = flwRes.data.data.id;
@@ -148,10 +179,15 @@ async function requestWithdrawal(userId, amount, accountDetails) {
     await client.query(
       `INSERT INTO transactions (user_id, type, amount, status, reference, metadata)
        VALUES ($1, 'withdrawal', $2, 'pending', $3, $4)`,
-      [userId, amount, reference, JSON.stringify({ ...accountDetails, flw_transfer_id: flwTransferId })]
+      [userId, amount, reference, JSON.stringify({ ...accountDetails, flw_transfer_id: flwTransferId, fee: withdrawalFee, transfer_amount: transferAmount })]
     );
 
     await client.query('COMMIT');
+    
+    // Sync Withdrawal Request to Zoho Books
+    const zohoService = require('./zohoService');
+    zohoService.syncWithdrawalRequest(userId, amount, withdrawalFee, reference)
+      .catch(err => console.error('Failed to sync withdrawal request to Zoho Books:', err));
     
     // Send email notification (non-blocking)
     if (user && user.email) {
@@ -222,6 +258,22 @@ async function handleWebhook(payload, signature) {
     );
 
     await client.query('COMMIT');
+    
+    // Sync with Zoho Books
+    if (logStatus === 'processed' && event === 'transfer.completed') {
+      const zohoService = require('./zohoService');
+      const meta = typeof tx.metadata === 'string' ? JSON.parse(tx.metadata) : (tx.metadata || {});
+      const transferAmount = meta.transfer_amount || tx.amount;
+      const fee = meta.fee || 0;
+      
+      if (status === 'SUCCESSFUL') {
+        zohoService.syncWithdrawalSuccess(tx.user_id, transferAmount, tx.reference)
+          .catch(err => console.error('Failed to sync withdrawal success to Zoho Books:', err));
+      } else if (status === 'FAILED') {
+        zohoService.syncWithdrawalFailed(tx.user_id, tx.amount, fee, tx.reference)
+          .catch(err => console.error('Failed to sync withdrawal failure to Zoho Books:', err));
+      }
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     
@@ -242,4 +294,35 @@ async function handleWebhook(payload, signature) {
   }
 }
 
-module.exports = { initiateDeposit, verifyDeposit, requestWithdrawal, handleWebhook };
+async function getBanks() {
+  try {
+    const flwRes = await axios.get('https://api.flutterwave.com/v3/banks/NG', {
+      headers: {
+        Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+      }
+    });
+    return flwRes.data.data;
+  } catch (err) {
+    console.error('Flutterwave Get Banks Error:', err.response?.data || err.message);
+    throw new AppError('Failed to fetch banks', 500, 'GATEWAY_ERROR');
+  }
+}
+
+async function resolveAccount(account_number, bank_code) {
+  try {
+    const flwRes = await axios.post('https://api.flutterwave.com/v3/accounts/resolve', {
+      account_number,
+      account_bank: bank_code,
+    }, {
+      headers: {
+        Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+      }
+    });
+    return flwRes.data.data;
+  } catch (err) {
+    console.error('Flutterwave Resolve Account Error:', err.response?.data || err.message);
+    throw new AppError('Failed to resolve account. Please check the account number and bank.', 400, 'INVALID_ACCOUNT');
+  }
+}
+
+module.exports = { initiateDeposit, verifyDeposit, requestWithdrawal, handleWebhook, getBanks, resolveAccount };

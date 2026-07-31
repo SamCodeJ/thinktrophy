@@ -6,7 +6,7 @@ import * as SecureStore from 'expo-secure-store';
 
 const API_URL = 'https://thinktrophy.com/api';
 // const API_URL = 'http://187.124.168.199:4000/api';
-// const API_URL = 'http://10.189.225.146:4000/api';
+// const API_URL = 'http://10.225.126.146:4000/api';
 
 // 10.41.29.146
 const client = axios.create({

@@ -16,18 +16,31 @@ function generateVerificationToken() {
 
 async function register(req, res, next) {
   try {
-    const { username, email, password, phone_number, first_name, last_name, dob } = req.body;
+    const { username, email, password, phone_number, first_name, last_name, dob, referral_code } = req.body;
+    const normalizedEmail = email ? email.trim().toLowerCase() : '';
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
     const { plain, hash: tokenHash } = generateVerificationToken();
     const tokenExpires = new Date(Date.now() + VERIFICATION_EXPIRY_HOURS * 60 * 60 * 1000);
 
+    // Handle referral code lookup
+    let referredBy = null;
+    if (referral_code) {
+      const refResult = await query('SELECT id FROM users WHERE referral_code = $1', [referral_code.trim().toUpperCase()]);
+      if (refResult.rows.length > 0) {
+        referredBy = refResult.rows[0].id;
+      }
+    }
+
+    // Generate a unique referral code for the new user
+    const newReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase(); // e.g. "A1B2C3D4"
+
     const result = await query(
       `INSERT INTO users
-         (username, email, password_hash, phone_number, first_name, last_name, dob, verification_token_hash, verification_token_expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (username, email, password_hash, phone_number, first_name, last_name, dob, verification_token_hash, verification_token_expires_at, referral_code, referred_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id, username, email, created_at`,
-      [username, email, passwordHash, phone_number, first_name, last_name, dob, tokenHash, tokenExpires]
+      [username.trim(), normalizedEmail, passwordHash, phone_number.trim(), first_name.trim(), last_name.trim(), dob, tokenHash, tokenExpires, newReferralCode, referredBy]
     );
     const user = result.rows[0];
 
@@ -52,16 +65,25 @@ async function register(req, res, next) {
 async function login(req, res, next) {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = email ? email.trim().toLowerCase() : '';
+    console.log(`[LOGIN ATTEMPT] Email: '${email}', Normalized: '${normalizedEmail}'`);
+    
     const result = await query(
-      'SELECT id, username, email, password_hash, is_active, email_verified FROM users WHERE email = $1',
-      [email]
+      'SELECT id, username, email, password_hash, is_active, email_verified FROM users WHERE LOWER(email) = $1',
+      [normalizedEmail]
     );
     const user = result.rows[0];
-    if (!user) throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
+    if (!user) {
+      console.log(`[LOGIN FAILED] User not found for email: '${normalizedEmail}'`);
+      throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
+    }
     if (!user.is_active) throw new AppError('Account is disabled', 403, 'ACCOUNT_DISABLED');
 
     const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
+    if (!match) {
+      console.log(`[LOGIN FAILED] Password mismatch for email: '${normalizedEmail}'`);
+      throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
+    }
 
     // if (!user.email_verified) {
     //   throw new AppError(
@@ -86,7 +108,8 @@ async function login(req, res, next) {
 async function forgotPassword(req, res, next) {
   try {
     const { email } = req.body;
-    const result = await query('SELECT id, username FROM users WHERE email = $1', [email]);
+    const normalizedEmail = email ? email.trim().toLowerCase() : '';
+    const result = await query('SELECT id, username FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
     const user = result.rows[0];
     if (user) {
       const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -102,7 +125,8 @@ async function forgotPassword(req, res, next) {
 async function resetPassword(req, res, next) {
   try {
     const { email, code, new_password } = req.body;
-    const result = await query('SELECT id, username, password_reset_code_hash, password_reset_expires_at FROM users WHERE email = $1', [email]);
+    const normalizedEmail = email ? email.trim().toLowerCase() : '';
+    const result = await query('SELECT id, username, password_reset_code_hash, password_reset_expires_at FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
     const user = result.rows[0];
     if (!user || !user.password_reset_code_hash || new Date() > new Date(user.password_reset_expires_at)) {
       throw new AppError('Invalid or expired reset code', 400, 'INVALID_CODE');
@@ -142,10 +166,10 @@ async function verifyEmail(req, res, next) {
 
     if (!user) throw new AppError('Invalid or expired verification link', 400, 'INVALID_TOKEN');
     if (user.email_verified) {
-      return res.json({ success: true, data: { message: 'Email is already verified. You can now log in.' } });
+      return res.redirect(`thinktrophy://auth/login?verified=true`);
     }
     if (new Date() > new Date(user.verification_token_expires_at)) {
-      throw new AppError('Verification link has expired. Please request a new one.', 400, 'TOKEN_EXPIRED');
+      return res.redirect(`thinktrophy://auth/login?error=expired`);
     }
 
     await query(
@@ -155,10 +179,7 @@ async function verifyEmail(req, res, next) {
       [user.id]
     );
 
-    res.json({
-      success: true,
-      data: { message: 'Email verified successfully. You can now log in.' },
-    });
+    res.redirect(`thinktrophy://auth/login?verified=true`);
   } catch (err) { next(err); }
 }
 
@@ -167,9 +188,10 @@ async function resendVerification(req, res, next) {
     const { email } = req.body;
     if (!email) throw new AppError('Email is required', 400, 'MISSING_FIELD');
 
+    const normalizedEmail = email.trim().toLowerCase();
     const result = await query(
-      'SELECT id, username, email, email_verified FROM users WHERE email = $1',
-      [email]
+      'SELECT id, username, email, email_verified FROM users WHERE LOWER(email) = $1',
+      [normalizedEmail]
     );
     const user = result.rows[0];
 
@@ -259,9 +281,10 @@ async function updatePassword(req, res, next) {
 async function adminLogin(req, res, next) {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = email ? email.trim().toLowerCase() : '';
     const result = await query(
-      'SELECT id, name, email, password_hash, role FROM admins WHERE email = $1',
-      [email]
+      'SELECT id, name, email, password_hash, role FROM admins WHERE LOWER(email) = $1',
+      [normalizedEmail]
     );
     const admin = result.rows[0];
     if (!admin) throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
@@ -305,7 +328,8 @@ async function adminUpdatePassword(req, res, next) {
 async function adminForgotPassword(req, res, next) {
   try {
     const { email } = req.body;
-    const result = await query('SELECT id, name FROM admins WHERE email = $1', [email]);
+    const normalizedEmail = email ? email.trim().toLowerCase() : '';
+    const result = await query('SELECT id, name FROM admins WHERE LOWER(email) = $1', [normalizedEmail]);
     const admin = result.rows[0];
     if (admin) {
       const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -321,7 +345,8 @@ async function adminForgotPassword(req, res, next) {
 async function adminResetPassword(req, res, next) {
   try {
     const { email, code, new_password } = req.body;
-    const result = await query('SELECT id, name, password_reset_code_hash, password_reset_expires_at FROM admins WHERE email = $1', [email]);
+    const normalizedEmail = email ? email.trim().toLowerCase() : '';
+    const result = await query('SELECT id, name, password_reset_code_hash, password_reset_expires_at FROM admins WHERE LOWER(email) = $1', [normalizedEmail]);
     const admin = result.rows[0];
     if (!admin || !admin.password_reset_code_hash || new Date() > new Date(admin.password_reset_expires_at)) {
       throw new AppError('Invalid or expired reset code', 400, 'INVALID_CODE');

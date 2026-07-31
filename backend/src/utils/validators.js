@@ -52,7 +52,7 @@ const withdrawSchema = z.object({
     type:          z.enum(['bank', 'mobile_money']),
     account_number: z.string().min(5),
     account_name:   z.string().min(2),
-    bank_code:      z.string().optional(),
+    bank_code:      z.string().min(3, 'Bank code is required'),
   }),
 });
 
@@ -95,6 +95,8 @@ const settingsSchema = z.object({
   platform_tagline: z.string().optional(),
   kiosk_mode:       z.boolean().optional(),
   kiosk_warning_count: z.number().int().min(1).optional(),
+  referral_win_percentage: z.number().min(0).max(1).optional(),
+  user_win_tax_percentage: z.number().min(0).max(1).optional(),
 });
 
 const forgotPasswordSchema = z.object({
@@ -110,6 +112,11 @@ const resetPasswordSchema = z.object({
 const updatePasswordSchema = z.object({
   old_password: z.string().min(1, 'Old password is required'),
   new_password: z.string().min(8).regex(/[A-Z]/, 'Must contain uppercase').regex(/[0-9]/, 'Must contain a number'),
+});
+
+const resolveAccountSchema = z.object({
+  account_number: z.string().min(10).max(10),
+  bank_code: z.string().min(3),
 });
 
 function validate(schema) {
@@ -136,6 +143,7 @@ module.exports = {
   submitAnswerSchema,
   depositSchema,
   withdrawSchema,
+  resolveAccountSchema,
   createQuestionSchema,
   createCategorySchema,
   testimonialBodySchema,

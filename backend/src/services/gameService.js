@@ -15,6 +15,8 @@ async function getPlatformSettings() {
     payoutPerfect: parseFloat(s.payout_perfect || '2.0'),
     payoutNine:    parseFloat(s.payout_nine    || '0.5'),
     gameDuration:  parseInt(s.game_duration    || '60', 10),
+    referralWinPercentage: parseFloat(s.referral_win_percentage || '0.10'),
+    userWinTaxPercentage: parseFloat(s.user_win_tax_percentage || '0.05'),
   };
 }
 
@@ -69,6 +71,11 @@ async function createSession(userId, categoryIds, stakeAmount) {
       'UPDATE users SET wallet_balance = wallet_balance - $1, total_staked = total_staked + $1 WHERE id = $2',
       [stakeAmount, userId]
     );
+
+    // Sync stake to Zoho Books
+    const zohoService = require('./zohoService');
+    zohoService.syncStake(userId, stakeAmount, `SESSION-${Date.now()}`)
+      .catch(err => console.error('Failed to sync stake to Zoho Books:', err));
 
     // Create session row
     const now = new Date();
@@ -241,18 +248,71 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
       
       // Credit payout
       if (payout > 0) {
+        // Calculate Profit and Tax
+        const stake = parseFloat(session.stake_amount);
+        const profit = payout - stake;
+        let taxAmount = 0;
+        
+        if (profit > 0 && settings.userWinTaxPercentage > 0) {
+          taxAmount = profit * settings.userWinTaxPercentage;
+        }
+        
+        const netPayout = payout - taxAmount;
+
+        // Check if this is the user's first win before updating their total_won
+        const preCheck = await client.query('SELECT total_won FROM users WHERE id = $1', [userId]);
+        const isFirstWin = parseFloat(preCheck.rows[0].total_won) === 0;
+
+        // Update wallet balance with the NET payout, but track total_won as the GROSS payout
         const uRes = await client.query(
-          'UPDATE users SET wallet_balance = wallet_balance + $1, total_won = total_won + $1 WHERE id = $2 RETURNING username, email',
-          [payout, userId]
+          'UPDATE users SET wallet_balance = wallet_balance + $1, total_won = total_won + $2 WHERE id = $3 RETURNING username, email, referred_by',
+          [netPayout, payout, userId]
         );
         userEmail = uRes.rows[0]?.email;
         userName = uRes.rows[0]?.username;
+        const referredBy = uRes.rows[0]?.referred_by;
         
+        // Log the gross payout transaction
         await client.query(
           `INSERT INTO transactions (user_id, type, amount, status, game_session_id)
            VALUES ($1, 'payout', $2, 'verified', $3)`,
           [userId, payout, sessionId]
         );
+        
+        const zohoService = require('./zohoService');
+        zohoService.syncPayout(userId, payout, sessionId)
+          .catch(err => console.error('Failed to sync payout to Zoho Books:', err));
+
+        // Log the tax deduction transaction if applicable
+        if (taxAmount > 0) {
+          await client.query(
+            `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
+             VALUES ($1, 'tax_deduction', $2, 'verified', $3, $4)`,
+            [userId, taxAmount, sessionId, JSON.stringify({ tax_rate: settings.userWinTaxPercentage, profit_amount: profit })]
+          );
+          
+          zohoService.syncWinTax(userId, taxAmount, sessionId)
+            .catch(err => console.error('Failed to sync win tax to Zoho Books:', err));
+        }
+
+        // Handle referral bonus (only on the referred user's first win)
+        if (isFirstWin && referredBy && settings.referralWinPercentage > 0) {
+          if (profit > 0) {
+            const bonus = profit * settings.referralWinPercentage;
+            await client.query(
+              'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
+              [bonus, referredBy]
+            );
+            await client.query(
+              `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
+               VALUES ($1, 'referral_bonus', $2, 'verified', $3, $4)`,
+              [referredBy, bonus, sessionId, JSON.stringify({ referred_user_id: userId, profit_amount: profit })]
+            );
+            
+            zohoService.syncReferralBonus(referredBy, bonus, sessionId)
+              .catch(err => console.error('Failed to sync referral bonus to Zoho Books:', err));
+          }
+        }
       }
 
       await client.query(

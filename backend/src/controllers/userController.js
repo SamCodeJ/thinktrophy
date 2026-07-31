@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { query } = require('../db/connection');
 const { AppError } = require('../middleware/errorHandler');
 
@@ -5,12 +6,21 @@ async function getProfile(req, res, next) {
   try {
     const result = await query(
       `SELECT id, username, email, phone_number, wallet_balance,
-              total_games_played, total_won, total_staked, email_verified, created_at
+              total_games_played, total_won, total_staked, email_verified, created_at, referral_code
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
-    if (!result.rows[0]) throw new AppError('User not found', 404, 'NOT_FOUND');
-    res.json({ success: true, data: result.rows[0] });
+    let user = result.rows[0];
+    if (!user) throw new AppError('User not found', 404, 'NOT_FOUND');
+
+    // Auto-generate a referral code for legacy users who don't have one yet
+    if (!user.referral_code) {
+      const newReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+      await query('UPDATE users SET referral_code = $1 WHERE id = $2', [newReferralCode, user.id]);
+      user.referral_code = newReferralCode;
+    }
+
+    res.json({ success: true, data: user });
   } catch (err) { next(err); }
 }
 

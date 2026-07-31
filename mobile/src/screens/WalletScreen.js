@@ -1,39 +1,48 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   TextInput, Alert, ActivityIndicator, Modal,
+  Platform, Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
-import { PayWithFlutterwave } from 'flutterwave-react-native';
+import { FlutterwaveInit } from 'flutterwave-react-native';
+import { WebView } from 'react-native-webview';
 import { colors } from '../utils/theme';
-import { getWallet, getProfile, deposit, verifyPayment, withdraw } from '../api';
+import { getWallet, getProfile, deposit, verifyPayment, withdraw, getBanks, resolveAccount } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function TxRow({ tx }) {
-  const typeIcon = { deposit: '⬇️', stake: '🎮', payout: '💰', withdrawal: '⬆️' };
+  const typeIcon = { deposit: '⬇️', stake: '🎮', payout: '💰', withdrawal: '⬆️', referral_bonus: '🎁', tax_deduction: '🏛️' };
   const typeColor = {
     deposit:    colors.green,
     payout:     colors.teal,
     stake:      colors.yellow,
     withdrawal: colors.red,
+    referral_bonus: colors.green,
+    tax_deduction: colors.red,
   };
+  
+  let displayName = tx.type.charAt(0).toUpperCase() + tx.type.slice(1);
+  if (tx.type === 'referral_bonus') displayName = 'Referral Bonus';
+  if (tx.type === 'tax_deduction') displayName = 'User Win Tax';
+
   return (
     <View style={styles.txRow}>
       <View style={styles.txIcon}>
         <Text style={{ fontSize: 18 }}>{typeIcon[tx.type] || '💳'}</Text>
       </View>
       <View style={styles.txInfo}>
-        <Text style={styles.txType}>{tx.type.charAt(0).toUpperCase() + tx.type.slice(1)}</Text>
+        <Text style={styles.txType}>{displayName}</Text>
         <Text style={styles.txDate}>{format(new Date(tx.created_at), 'MMM d, yyyy HH:mm')}</Text>
       </View>
       <View style={{ alignItems: 'flex-end' }}>
         <Text style={[styles.txAmount, { color: typeColor[tx.type] || colors.light }]}>
-          {tx.type === 'stake' || tx.type === 'withdrawal' ? '−' : '+'}{fmt(tx.amount)}
+          {tx.type === 'stake' || tx.type === 'withdrawal' || tx.type === 'tax_deduction' ? '−' : '+'}{fmt(tx.amount)}
         </Text>
         <Text style={styles.txStatus}>{tx.status}</Text>
       </View>
@@ -54,6 +63,7 @@ export default function WalletScreen() {
 
   const { data: walletData, isLoading } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
   const { data: profileData } = useQuery({ queryKey: ['profile'], queryFn: getProfile });
+  const { data: banksData, isLoading: loadingBanks } = useQuery({ queryKey: ['banks'], queryFn: getBanks });
   
   const balance      = walletData?.data?.balance || 0;
   const transactions = walletData?.data?.transactions || [];
@@ -63,10 +73,12 @@ export default function WalletScreen() {
   const [depositModal, setDepositModal]   = useState(false);
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [depositAmount, setDepositAmount] = useState('');
-  const [withdrawForm, setWithdrawForm]   = useState({ amount: '', account_number: '', account_name: '' });
+  const [withdrawForm, setWithdrawForm]   = useState({ amount: '', account_number: '', account_name: '', bank_code: '', bank_name: '' });
+  const [bankModal, setBankModal]         = useState(false);
   
   const [paymentRef, setPaymentRef] = useState(null);
-  const [showFlutterwave, setShowFlutterwave] = useState(false);
+  const [paymentLink, setPaymentLink] = useState(null);
+  const verifyingRef = useRef(false);
 
   const depositMut = useMutation({
     mutationFn: () => deposit({ amount: parseFloat(depositAmount) }),
@@ -74,27 +86,93 @@ export default function WalletScreen() {
       const ref = res.data.reference;
       setPaymentRef(ref);
       setDepositModal(false);
-      setShowFlutterwave(true);
+      
+      try {
+        const link = await FlutterwaveInit({
+          tx_ref: ref,
+          authorization: 'FLWPUBK_TEST-e35abe483f6a314d5769d6689cefbca6-X',
+          customer: {
+            email: userEmail,
+            name: userName
+          },
+          amount: parseFloat(depositAmount),
+          currency: 'NGN',
+          payment_options: 'card,ussd,banktransfer',
+          redirect_url: 'https://flutterwave.com/rn-redirect'
+        });
+        setPaymentLink(link);
+      } catch (err) {
+        console.error('FlutterwaveInit error:', err);
+        Alert.alert('Error', 'Failed to initialize payment. Please try again.');
+      }
     },
     onError: e => Alert.alert('Error', e?.error?.message || 'Deposit failed'),
   });
 
-  const handleOnRedirect = async (data) => {
-    setShowFlutterwave(false);
-    if (data.status === 'successful') {
+  const handleNavigationStateChange = async (navState) => {
+    if (!navState.url.includes('flutterwave.com/rn-redirect')) return;
+    if (verifyingRef.current) return;
+    verifyingRef.current = true;
+    setPaymentLink(null);
+
+    const params = {};
+    if (navState.url.includes('?')) {
+      const queryString = navState.url.split('?')[1];
+      queryString.split('&').forEach(p => {
+        const [k, v] = p.split('=');
+        params[k] = decodeURIComponent(v || '');
+      });
+    }
+
+    const txRef = paymentRef || params.tx_ref;
+    if (!txRef) {
+      verifyingRef.current = false;
+      Alert.alert('Verification Failed', 'Could not find payment reference. Please contact support.');
+      return;
+    }
+
+    if (params.status === 'successful') {
       try {
-        await verifyPayment(data.transaction_id);
+        await verifyPayment(txRef);
         qc.invalidateQueries({ queryKey: ['wallet'] });
         qc.invalidateQueries({ queryKey: ['profile'] });
         setDepositAmount('');
+        setPaymentRef(null);
         Alert.alert('Success', `${fmt(parseFloat(depositAmount) || 0)} credited to your wallet!`);
       } catch (e) {
-        Alert.alert('Verification Failed', 'Payment was successful but verification failed. Please contact support.');
+        console.error('Verify payment error:', e);
+        Alert.alert(
+          'Verification Failed',
+          e?.error?.message || 'Payment was successful but verification failed. Please contact support.'
+        );
+      } finally {
+        verifyingRef.current = false;
       }
     } else {
-      Alert.alert('Payment Failed', 'Your payment was not successful.');
+      verifyingRef.current = false;
+      setPaymentRef(null);
+      Alert.alert('Payment Failed', 'Your payment was not successful or was cancelled.');
     }
   };
+
+  const resolveMut = useMutation({
+    mutationFn: (data) => resolveAccount(data),
+    onSuccess: (res) => {
+      setWithdrawForm(x => ({ ...x, account_name: res.data.account_name }));
+    },
+    onError: () => {
+      setWithdrawForm(x => ({ ...x, account_name: '' }));
+      Alert.alert('Error', 'Could not resolve account name. Please check the account number and bank.');
+    }
+  });
+
+  useEffect(() => {
+    if (withdrawForm.account_number.length === 10 && withdrawForm.bank_code) {
+      resolveMut.mutate({ account_number: withdrawForm.account_number, bank_code: withdrawForm.bank_code });
+    } else {
+      setWithdrawForm(x => ({ ...x, account_name: '' }));
+    }
+  }, [withdrawForm.account_number, withdrawForm.bank_code]);
 
   const withdrawMut = useMutation({
     mutationFn: () => withdraw({
@@ -103,33 +181,38 @@ export default function WalletScreen() {
         type: 'bank',
         account_number: withdrawForm.account_number,
         account_name: withdrawForm.account_name,
+        bank_code: withdrawForm.bank_code,
       },
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['wallet'] });
       setWithdrawModal(false);
-      setWithdrawForm({ amount: '', account_number: '', account_name: '' });
+      setWithdrawForm({ amount: '', account_number: '', account_name: '', bank_code: '', bank_name: '' });
       Alert.alert('Success', 'Withdrawal request submitted!');
     },
     onError: e => Alert.alert('Error', e?.error?.message || 'Withdrawal failed'),
   });
 
-  if (showFlutterwave && paymentRef) {
+  if (paymentLink) {
     return (
-      <PayWithFlutterwave
-        onRedirect={handleOnRedirect}
-        options={{
-          tx_ref: paymentRef,
-          authorization: 'FLWPUBK_TEST-e35abe483f6a314d5769d6689cefbca6-X',
-          customer: {
-            email: userEmail,
-            name: userName
-          },
-          amount: parseFloat(depositAmount),
-          currency: 'NGN',
-          payment_options: 'card,ussd,banktransfer'
-        }}
-      />
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.dark }}>
+        <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.darker }}>
+          <TouchableOpacity onPress={() => setPaymentLink(null)}>
+            <Text style={{ fontSize: 16, color: colors.blue }}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, fontWeight: 'bold', color: '#fff' }}>Secure Checkout</Text>
+          <View style={{ width: 50 }} />
+        </View>
+        <WebView 
+          source={{ uri: paymentLink }} 
+          style={{ flex: 1 }}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={true}
+          scalesPageToFit={true}
+          onNavigationStateChange={handleNavigationStateChange}
+        />
+      </SafeAreaView>
     );
   }
 
@@ -175,7 +258,10 @@ export default function WalletScreen() {
 
         {/* Deposit Modal */}
         <Modal visible={depositModal} transparent animationType="slide" onRequestClose={() => setDepositModal(false)}>
-          <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+              <View style={styles.modalBackdrop} />
+            </TouchableWithoutFeedback>
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>Deposit Funds</Text>
               <Text style={styles.label}>Amount (₦)</Text>
@@ -197,45 +283,123 @@ export default function WalletScreen() {
                   {depositMut.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>Proceed to Pay</Text>}
                 </LinearGradient>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setDepositModal(false)} style={styles.cancelBtn}>
+              <TouchableOpacity onPress={() => { Keyboard.dismiss(); setDepositModal(false); }} style={styles.cancelBtn}>
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* Withdraw Modal */}
         <Modal visible={withdrawModal} transparent animationType="slide" onRequestClose={() => setWithdrawModal(false)}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
+          <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+              <View style={styles.modalBackdrop} />
+            </TouchableWithoutFeedback>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              bounces={false}
+              contentContainerStyle={styles.modalCard}
+            >
               <Text style={styles.modalTitle}>Withdraw Funds</Text>
-              {[
-                { key: 'amount',         label: 'Amount (₦)',        keyboard: 'decimal-pad', placeholder: '0.00' },
-                { key: 'account_name',   label: 'Account Name',      keyboard: 'default',     placeholder: 'John Doe' },
-                { key: 'account_number', label: 'Account Number',    keyboard: 'numeric',     placeholder: '1234567890' },
-              ].map(f => (
-                <View key={f.key} style={{ marginBottom: 12 }}>
-                  <Text style={styles.label}>{f.label}</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder={f.placeholder}
-                    placeholderTextColor={colors.white30}
-                    keyboardType={f.keyboard}
-                    value={withdrawForm[f.key]}
-                    onChangeText={v => setWithdrawForm(x => ({ ...x, [f.key]: v }))}
-                  />
+              
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.label}>Bank</Text>
+                <TouchableOpacity 
+                  style={[styles.input, { justifyContent: 'center' }]} 
+                  onPress={() => setBankModal(true)}
+                >
+                  <Text style={{ color: withdrawForm.bank_name ? colors.light : colors.white30, fontSize: 15 }}>
+                    {withdrawForm.bank_name || 'Select Bank'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.label}>Amount (₦)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="0.00"
+                  placeholderTextColor={colors.white30}
+                  keyboardType="decimal-pad"
+                  value={withdrawForm.amount}
+                  onChangeText={v => setWithdrawForm(x => ({ ...x, amount: v }))}
+                />
+              </View>
+
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.label}>Account Number</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="1234567890"
+                  placeholderTextColor={colors.white30}
+                  keyboardType="numeric"
+                  maxLength={10}
+                  value={withdrawForm.account_number}
+                  onChangeText={v => setWithdrawForm(x => ({ ...x, account_number: v.replace(/[^0-9]/g, '') }))}
+                />
+              </View>
+
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.label}>Account Name</Text>
+                <View style={[styles.input, { justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.03)' }]}>
+                  {resolveMut.isPending ? (
+                    <ActivityIndicator size="small" color={colors.blue} style={{ alignSelf: 'flex-start' }} />
+                  ) : (
+                    <Text style={{ color: withdrawForm.account_name ? colors.light : colors.white30, fontSize: 15 }}>
+                      {withdrawForm.account_name || 'Auto-filled after entering account number'}
+                    </Text>
+                  )}
                 </View>
-              ))}
-              <TouchableOpacity onPress={() => withdrawMut.mutate()} disabled={withdrawMut.isPending} activeOpacity={0.85}>
-                <LinearGradient colors={[colors.blue, colors.teal]} style={styles.modalBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+              </View>
+
+              <TouchableOpacity 
+                onPress={() => withdrawMut.mutate()} 
+                disabled={withdrawMut.isPending || !withdrawForm.amount || !withdrawForm.account_number || !withdrawForm.account_name || !withdrawForm.bank_code} 
+                activeOpacity={0.85}
+              >
+                <LinearGradient colors={[colors.blue, colors.teal]} style={[styles.modalBtn, (!withdrawForm.amount || !withdrawForm.account_number || !withdrawForm.account_name || !withdrawForm.bank_code) && { opacity: 0.5 }]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                   {withdrawMut.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>Request Withdrawal</Text>}
                 </LinearGradient>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setWithdrawModal(false)} style={styles.cancelBtn}>
+              <TouchableOpacity onPress={() => { Keyboard.dismiss(); setWithdrawModal(false); }} style={styles.cancelBtn}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Bank Selection Modal */}
+        <Modal visible={bankModal} transparent animationType="slide" onRequestClose={() => setBankModal(false)}>
+          <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <TouchableWithoutFeedback onPress={() => setBankModal(false)}>
+              <View style={styles.modalBackdrop} />
+            </TouchableWithoutFeedback>
+            <View style={[styles.modalCard, { height: '70%' }]}>
+              <Text style={styles.modalTitle}>Select Bank</Text>
+              {loadingBanks ? (
+                <ActivityIndicator color={colors.blue} style={{ marginTop: 40 }} />
+              ) : (
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  {(banksData?.data || []).sort((a, b) => a.name.localeCompare(b.name)).map(bank => (
+                    <TouchableOpacity 
+                      key={bank.code}
+                      style={{ paddingVertical: 16, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }}
+                      onPress={() => {
+                        setWithdrawForm(x => ({ ...x, bank_code: bank.code, bank_name: bank.name }));
+                        setBankModal(false);
+                      }}
+                    >
+                      <Text style={{ color: colors.light, fontSize: 16 }}>{bank.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+              <TouchableOpacity onPress={() => setBankModal(false)} style={styles.cancelBtn}>
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
       </SafeAreaView>
     </LinearGradient>
@@ -265,6 +429,7 @@ const styles = StyleSheet.create({
   txAmount:     { fontSize: 15, fontWeight: '700' },
   txStatus:     { fontSize: 10, color: colors.white30, marginTop: 2 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject },
   modalCard:    { backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 28, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   modalTitle:   { fontSize: 20, fontWeight: '800', color: colors.light, marginBottom: 20 },
   label:        { fontSize: 13, color: colors.white50, marginBottom: 6 },

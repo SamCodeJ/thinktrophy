@@ -66,6 +66,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at     TIMESTA
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_code_hash     TEXT;
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_expires_at    TIMESTAMPTZ;
 
+-- Add referral system columns
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(20) UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
 -- Add new user profile columns to existing databases
 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100);
@@ -160,7 +164,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_logs_date ON admin_logs(created_at);
 CREATE TABLE IF NOT EXISTS transactions (
   id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  type            VARCHAR(20)  NOT NULL CHECK (type IN ('deposit','stake','payout','withdrawal')),
+  type            VARCHAR(20)  NOT NULL CHECK (type IN ('deposit','stake','payout','withdrawal','referral_bonus','tax_deduction')),
   amount          NUMERIC(12,2) NOT NULL,
   status          VARCHAR(20)  NOT NULL DEFAULT 'pending'
                   CHECK (status IN ('pending','verified','failed','reversed')),
@@ -169,6 +173,10 @@ CREATE TABLE IF NOT EXISTS transactions (
   metadata        JSONB,
   created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- Update existing transactions table if needed
+ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
+ALTER TABLE transactions ADD CONSTRAINT transactions_type_check CHECK (type IN ('deposit','stake','payout','withdrawal','referral_bonus','tax_deduction'));
 
 CREATE INDEX IF NOT EXISTS idx_transactions_user   ON transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_type   ON transactions(type);

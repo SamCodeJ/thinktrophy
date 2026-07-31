@@ -14,7 +14,7 @@ export default function Settings() {
   const [form, setForm] = useState({
     min_stake: '', max_stake: '', payout_perfect: '',
     payout_nine: '', game_duration: '', platform_name: '', platform_tagline: '',
-    kiosk_mode: false, kiosk_warning_count: 1,
+    kiosk_mode: false, kiosk_warning_count: 1, referral_win_percentage: '', user_win_tax_percentage: '',
   });
 
   useEffect(() => {
@@ -30,6 +30,8 @@ export default function Settings() {
         platform_tagline:     s.platform_tagline     || 'Think Sharp. Win Big.',
         kiosk_mode:           s.kiosk_mode === 'true',
         kiosk_warning_count:  parseInt(s.kiosk_warning_count || '1', 10),
+        referral_win_percentage: s.referral_win_percentage || '0.10',
+        user_win_tax_percentage: s.user_win_tax_percentage || '0.05',
       });
     }
   }, [data]);
@@ -45,6 +47,8 @@ export default function Settings() {
       platform_tagline:    form.platform_tagline,
       kiosk_mode:          form.kiosk_mode,
       kiosk_warning_count: parseInt(form.kiosk_warning_count, 10),
+      referral_win_percentage: parseFloat(form.referral_win_percentage),
+      user_win_tax_percentage: parseFloat(form.user_win_tax_percentage),
     }),
     onSuccess: () => { qc.invalidateQueries(['settings']); toast.success('Settings saved'); },
     onError: e => toast.error(e?.error?.message || 'Failed to save'),
@@ -105,6 +109,22 @@ export default function Settings() {
               <label className="block text-sm text-white/60 mb-1.5">Game Duration (Seconds)</label>
               <input className="input" type="number" min="10" step="1" value={form.game_duration} onChange={e => set('game_duration', e.target.value)} />
               <p className="text-xs text-white/30 mt-1">How much total time the player has to complete all 10 questions</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-white/5 pt-6">
+          <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider mb-4">Taxes & Referrals</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">User Win Tax (UWT)</label>
+              <input className="input" type="number" min="0" step="0.01" max="1" value={form.user_win_tax_percentage} onChange={e => set('user_win_tax_percentage', e.target.value)} />
+              <p className="text-xs text-white/30 mt-1">Percentage of a player's profit deducted as tax (e.g., 0.05 for 5%)</p>
+            </div>
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">Referral Win Percentage</label>
+              <input className="input" type="number" min="0" step="0.01" max="1" value={form.referral_win_percentage} onChange={e => set('referral_win_percentage', e.target.value)} />
+              <p className="text-xs text-white/30 mt-1">Percentage of a player's first profit that goes to their referrer (e.g., 0.10 for 10%)</p>
             </div>
           </div>
         </div>

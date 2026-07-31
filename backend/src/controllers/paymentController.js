@@ -1,4 +1,4 @@
-const { initiateDeposit, verifyDeposit, requestWithdrawal, handleWebhook } = require('../services/paymentService');
+const { initiateDeposit, verifyDeposit, requestWithdrawal, handleWebhook, getBanks: fetchBanks, resolveAccount: fetchAccountName } = require('../services/paymentService');
 
 async function deposit(req, res, next) {
   try {
@@ -10,7 +10,7 @@ async function deposit(req, res, next) {
 
 async function verifyPayment(req, res, next) {
   try {
-    const { reference } = req.params; // In this case, frontend sends transaction_id as reference
+    const { reference } = req.params; // Our tx_ref e.g. TT-1234567890-ABCD1234
     const data = await verifyDeposit(req.user.userId, reference);
     res.json({ success: true, data });
   } catch (err) { next(err); }
@@ -35,4 +35,19 @@ async function webhook(req, res, next) {
   }
 }
 
-module.exports = { deposit, verifyPayment, withdraw, webhook };
+async function getBanks(req, res, next) {
+  try {
+    const data = await fetchBanks();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+}
+
+async function resolveAccount(req, res, next) {
+  try {
+    const { account_number, bank_code } = req.body;
+    const data = await fetchAccountName(account_number, bank_code);
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+}
+
+module.exports = { deposit, verifyPayment, withdraw, webhook, getBanks, resolveAccount };

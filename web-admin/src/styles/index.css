@@ -3,7 +3,11 @@
 @tailwind utilities;
 
 @layer base {
-  * { box-sizing: border-box; }
+  * { 
+    box-sizing: border-box; 
+    scrollbar-width: thin;
+    scrollbar-color: #0984E3 #1E272E;
+  }
   body {
     @apply bg-brand-darker text-brand-light font-sans;
     -webkit-font-smoothing: antialiased;

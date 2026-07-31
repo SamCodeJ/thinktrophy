@@ -46,11 +46,50 @@ export default function Logs() {
       key: 'details', 
       header: 'Details', 
       sortable: false,
-      render: v => (
-        <div className="max-w-md max-h-24 overflow-y-auto pr-2 text-xs text-white/50 font-mono bg-black/20 p-2 rounded border border-white/5">
-          {v ? JSON.stringify(v, null, 2) : '—'}
-        </div>
-      )
+      render: v => {
+        let displayValue = v;
+        if (typeof v === 'string') {
+          try {
+            displayValue = JSON.parse(v);
+          } catch (e) {
+            // keep as string if not valid JSON
+          }
+        }
+
+        if (!displayValue) return <span className="text-white/40">—</span>;
+
+        // If it's an object, render it as clean key-value pairs
+        if (typeof displayValue === 'object' && !Array.isArray(displayValue)) {
+          return (
+            <div className="max-w-md max-h-28 overflow-auto pr-2 flex flex-col gap-1.5">
+              {Object.entries(displayValue).map(([key, value]) => {
+                // Format key: "game_duration" -> "Game Duration"
+                const formattedKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                
+                // Format value nicely
+                let formattedValue = value;
+                if (typeof value === 'boolean') formattedValue = value ? 'Yes' : 'No';
+                else if (value === null || value === undefined) formattedValue = '—';
+                else if (typeof value === 'object') formattedValue = JSON.stringify(value);
+
+                return (
+                  <div key={key} className="flex items-start text-xs">
+                    <span className="text-white/40 font-medium min-w-[110px] shrink-0">{formattedKey}:</span>
+                    <span className="text-white/80 break-words">{String(formattedValue)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        }
+
+        // Fallback for simple strings or arrays
+        return (
+          <div className="max-w-md max-h-24 overflow-auto pr-2 text-xs text-white/70 whitespace-pre-wrap">
+            {String(displayValue)}
+          </div>
+        );
+      }
     },
     { 
       key: 'ip_address', 

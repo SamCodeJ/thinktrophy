@@ -19,7 +19,13 @@ const linking = {
       Result: 'result/:id',
       GameHistory: 'history',
       GameTranscript: 'transcript/:id',
-      Auth: 'auth',
+      Auth: {
+        path: 'auth',
+        screens: {
+          Login: 'login',
+          Register: 'register',
+        }
+      },
       Onboarding: 'onboarding'
     }
   }

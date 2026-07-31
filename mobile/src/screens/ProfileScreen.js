@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
+import * as Clipboard from 'expo-clipboard';
 import { colors } from '../utils/theme';
 import { useAuth } from '../store/authStore';
 import { getProfile, getGameHistory, logout, updatePassword } from '../api';
@@ -71,6 +72,13 @@ export default function ProfileScreen({ navigation }) {
     ]);
   }
 
+  async function handleCopyReferralCode() {
+    if (profile?.referral_code) {
+      await Clipboard.setStringAsync(profile.referral_code);
+      Alert.alert('Copied!', 'Referral code copied to clipboard.');
+    }
+  }
+
   if (!profile) return null;
 
   return (
@@ -84,6 +92,14 @@ export default function ProfileScreen({ navigation }) {
             </LinearGradient>
             <Text style={styles.username}>{profile.username}</Text>
             <Text style={styles.memberSince}>Member since {format(new Date(profile.created_at), 'MMMM yyyy')}</Text>
+            
+            {profile.referral_code && (
+              <TouchableOpacity onPress={handleCopyReferralCode} style={styles.referralBtn}>
+                <Text style={styles.referralLabel}>Referral Code:</Text>
+                <Text style={styles.referralCode}>{profile.referral_code}</Text>
+                <Text style={styles.referralCopy}>📋</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Stats grid */}
@@ -193,6 +209,10 @@ const styles = StyleSheet.create({
   avatarText:  { fontSize: 36, fontWeight: '900', color: '#fff' },
   username:    { fontSize: 22, fontWeight: '800', color: colors.light },
   memberSince: { fontSize: 13, color: colors.white30, marginTop: 4 },
+  referralBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, marginTop: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  referralLabel: { fontSize: 12, color: colors.white50, marginRight: 6 },
+  referralCode: { fontSize: 14, fontWeight: '700', color: colors.teal, marginRight: 6 },
+  referralCopy: { fontSize: 14 },
   statsGrid:   { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 28 },
   statCard: {
     width: '31%', backgroundColor: colors.card, borderRadius: 16, padding: 14,

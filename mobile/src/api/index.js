@@ -20,6 +20,8 @@ export const getLeaderboard = (period = 'weekly') => client.get(`/user/leaderboa
 export const deposit        = (data) => client.post('/payment/deposit', data);
 export const verifyPayment  = (reference) => client.post(`/payment/verify/${reference}`);
 export const withdraw       = (data) => client.post('/payment/withdraw', data);
+export const getBanks       = () => client.get('/payment/banks');
+export const resolveAccount = (data) => client.post('/payment/resolve-account', data);
 
 // Public app settings (no auth required)
 export const getPublicSettings   = () => client.get('/app/settings');

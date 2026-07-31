@@ -10,13 +10,17 @@ import { resetPassword } from '../api';
 
 export default function ResetPasswordScreen({ navigation, route }) {
   const initialEmail = route.params?.email || '';
-  const [form, setForm] = useState({ email: initialEmail, code: '', new_password: '' });
+  const [form, setForm] = useState({ email: initialEmail, code: '', new_password: '', confirm_password: '' });
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
 
   async function handleReset() {
-    if (!form.email || !form.code || !form.new_password) {
+    if (!form.email || !form.code || !form.new_password || !form.confirm_password) {
       Alert.alert('Missing fields', 'Please fill in all fields.');
+      return;
+    }
+    if (form.new_password !== form.confirm_password) {
+      Alert.alert('Error', 'Passwords do not match.');
       return;
     }
     setLoading(true);
@@ -71,7 +75,7 @@ export default function ResetPasswordScreen({ navigation, route }) {
 
               <View style={styles.field}>
                 <Text style={styles.label}>New Password</Text>
-                <View style={{ position: 'relative' }}>
+                <View style={styles.inputContainer}>
                   <TextInput
                     style={[styles.input, { paddingRight: 50 }]}
                     placeholder="••••••••"
@@ -85,6 +89,27 @@ export default function ResetPasswordScreen({ navigation, route }) {
                   </TouchableOpacity>
                 </View>
               </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Confirm Password</Text>
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={[styles.input, { paddingRight: 50 }]}
+                    placeholder="••••••••"
+                    placeholderTextColor={colors.white30}
+                    value={form.confirm_password}
+                    onChangeText={v => setForm(f => ({ ...f, confirm_password: v }))}
+                    secureTextEntry={!showPw}
+                  />
+                  <TouchableOpacity onPress={() => setShowPw(s => !s)} style={styles.eyeBtn}>
+                    <Text style={{ color: colors.white30, fontSize: 16 }}>{showPw ? '🙈' : '👁️'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <Text style={styles.hint}>
+                Password must be at least 8 characters with one uppercase letter and one number.
+              </Text>
 
               <TouchableOpacity onPress={handleReset} disabled={loading} activeOpacity={0.85}>
                 <LinearGradient colors={[colors.blue, colors.teal]} style={styles.submitBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
@@ -110,12 +135,14 @@ const styles = StyleSheet.create({
   cardSub:   { fontSize: 14, color: 'rgba(255,255,255,0.5)', marginBottom: 24, lineHeight: 20 },
   field:     { marginBottom: 16 },
   label:     { fontSize: 13, color: 'rgba(255,255,255,0.5)', marginBottom: 6, fontWeight: '500' },
+  inputContainer: { position: 'relative', justifyContent: 'center' },
   input: {
     backgroundColor: colors.dark, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
     borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13,
     color: colors.light, fontSize: 15,
   },
-  eyeBtn:       { position: 'absolute', right: 14, top: 13 },
-  submitBtn:  { height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  eyeBtn:       { position: 'absolute', right: 14, height: '100%', justifyContent: 'center' },
+  hint:       { fontSize: 11, color: 'rgba(255,255,255,0.25)', marginTop: 4, lineHeight: 16, marginBottom: 12 },
+  submitBtn:  { height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   submitText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
