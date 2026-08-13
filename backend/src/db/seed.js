@@ -224,8 +224,8 @@ async function seed() {
     // ── Demo user
     const userHash = await bcrypt.hash('Player@123456', 12);
     await client.query(`
-      INSERT INTO users (username, email, password_hash, phone_number, wallet_balance)
-      VALUES ('demo_player', 'player@thinktrophy.com', $1, '+1234567890', 100.00)
+      INSERT INTO users (username, email, password_hash, first_name, last_name, phone_number, dob, wallet_balance, email_verified)
+      VALUES ('demo_player', 'player@thinktrophy.com', $1, 'Demo', 'Player', '+1234567890', '1990-01-01', 100.00, TRUE)
       ON CONFLICT (email) DO NOTHING
     `, [userHash]);
     console.log('  ✓ Demo user seeded (player@thinktrophy.com / Player@123456)');
