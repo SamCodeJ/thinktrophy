@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 .env
 .env.local
 .env.production
@@ -12,3 +12,4 @@ coverage/
 .expo/
 android/
 ios/
+self_client.json
