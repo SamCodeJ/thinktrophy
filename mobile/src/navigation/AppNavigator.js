@@ -1,9 +1,16 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, getStateFromPath } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
+import {
+  extractReferralCodeFromPath,
+  isReferralPath,
+  referralHttpsPrefix,
+} from '../utils/referral';
+
+const httpsPrefix = referralHttpsPrefix();
 
 const linking = {
-  prefixes: [Linking.createURL('/'), 'thinktrophy://'],
+  prefixes: [Linking.createURL('/'), 'thinktrophy://', ...(httpsPrefix ? [httpsPrefix] : [])],
   config: {
     screens: {
       Main: {
@@ -28,7 +35,29 @@ const linking = {
       },
       Onboarding: 'onboarding'
     }
-  }
+  },
+  getStateFromPath(path, options) {
+    if (isReferralPath(path)) {
+      const referral = extractReferralCodeFromPath(path);
+      if (referral) {
+        return {
+          routes: [
+            {
+              name: 'Auth',
+              state: {
+                routes: [
+                  { name: 'Login' },
+                  { name: 'Register', params: { referral } },
+                ],
+                index: 1,
+              },
+            },
+          ],
+        };
+      }
+    }
+    return getStateFromPath(path, options);
+  },
 };
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../store/authStore';

@@ -104,6 +104,13 @@ export default function GameTranscriptScreen({ navigation, route }) {
                   color={colors.teal}
                 />
               )}
+              {won && result.taxAmount > 0 && (
+                <StatPill
+                  label="Tax"
+                  value={`−${fmt(result.taxAmount)}`}
+                  color={colors.red}
+                />
+              )}
             </View>
 
             {/* Question-by-question review */}

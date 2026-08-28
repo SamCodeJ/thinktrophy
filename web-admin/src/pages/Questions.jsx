@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Upload, Edit2, ToggleLeft, ToggleRight, Download, CheckCircle2, XCircle, AlertTriangle, Search, X, ShieldAlert } from 'lucide-react';
 import { Document, Paragraph, TextRun, Packer } from 'docx';
@@ -12,6 +12,17 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../hooks/useAuth';
 
 const BLANK = { category_id: '', question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_option: 'a', difficulty: 'medium' };
+
+function cleanQuestionParams(filters) {
+  const params = {};
+  if (filters.search?.trim()) params.search = filters.search.trim();
+  if (filters.category_id) params.category_id = filters.category_id;
+  if (filters.difficulty) params.difficulty = filters.difficulty;
+  if (filters.status) params.status = filters.status;
+  params.page = filters.page || 1;
+  params.limit = filters.limit || 20;
+  return params;
+}
 
 function QuestionForm({ initial, categories, onSave, loading }) {
   const [form, setForm] = useState(initial || BLANK);
@@ -94,13 +105,30 @@ export default function Questions() {
   const [bulkFile, setBulkFile] = useState(null);
   const [uploadReport, setUploadReport] = useState(null); // { inserted, errors, filename }
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const searchTimer = useRef(null);
+
+  // Live search: apply after a short pause while typing (also works with Enter / Search button)
+  useEffect(() => {
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      const next = searchInput.trim();
+      setFilters(f => (f.search === next ? f : { ...f, search: next, page: 1 }));
+    }, 350);
+    return () => clearTimeout(searchTimer.current);
+  }, [searchInput]);
+
+  function applySearchNow() {
+    clearTimeout(searchTimer.current);
+    const next = searchInput.trim();
+    setFilters(f => ({ ...f, search: next, page: 1 }));
+  }
 
   const { data: catData } = useQuery({ queryKey: ['admin-categories'], queryFn: getAdminCategories });
   const categories = catData?.data || [];
 
   const { data, isLoading } = useQuery({
     queryKey: ['questions', filters],
-    queryFn: () => getQuestions({ ...filters }),
+    queryFn: () => getQuestions(cleanQuestionParams(filters)),
   });
 
   const createMut = useMutation({
@@ -328,7 +356,11 @@ export default function Questions() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Questions</h1>
-          <p className="text-white/40 text-sm mt-1">{data?.total || 0} questions total</p>
+          <p className="text-white/40 text-sm mt-1">
+            {filters.search
+              ? `${data?.total || 0} result${(data?.total || 0) === 1 ? '' : 's'} for “${filters.search}”`
+              : `${data?.total || 0} questions total`}
+          </p>
         </div>
         <div className="flex gap-3">
           {canEdit && selectedIds.size > 0 && (
@@ -360,11 +392,14 @@ export default function Questions() {
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
           <input
             className="input pl-9 pr-20"
-            placeholder="Search question text… (press Enter)"
+            placeholder="Search by question text, option, or category…"
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter') setFilters(f => ({ ...f, search: searchInput.trim(), page: 1 }));
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                applySearchNow();
+              }
             }}
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -378,7 +413,7 @@ export default function Questions() {
               </button>
             )}
             <button
-              onClick={() => setFilters(f => ({ ...f, search: searchInput.trim(), page: 1 }))}
+              onClick={applySearchNow}
               className="px-2.5 py-1 rounded-lg bg-brand-blue/20 hover:bg-brand-blue/30 text-brand-blue text-xs font-medium transition-colors"
             >
               Search
@@ -438,12 +473,26 @@ export default function Questions() {
       {/* Add/Edit modal */}
       <Modal open={modal === 'add' || modal === 'edit'} onClose={() => setModal(null)} title={modal === 'edit' ? 'Edit Question' : 'Add Question'} size="md">
         <QuestionForm
+          key={modal === 'edit' ? editing?.id || 'edit' : 'add'}
           initial={modal === 'edit' ? editing : null}
           categories={categories}
           loading={createMut.isPending || updateMut.isPending}
           onSave={form => {
-            if (modal === 'edit') updateMut.mutate({ id: editing.id, data: form });
-            else createMut.mutate(form);
+            if (modal === 'edit') {
+              const {
+                category_id, question_text, option_a, option_b, option_c, option_d,
+                correct_option, difficulty,
+              } = form;
+              updateMut.mutate({
+                id: editing.id,
+                data: {
+                  category_id, question_text, option_a, option_b, option_c, option_d,
+                  correct_option, difficulty,
+                },
+              });
+            } else {
+              createMut.mutate(form);
+            }
           }}
         />
       </Modal>

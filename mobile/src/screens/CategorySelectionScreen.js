@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   TextInput, Alert, ActivityIndicator,
@@ -6,9 +6,11 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
+import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../utils/theme';
-import { getCategories, createGameSession, getProfile } from '../api';
+import { getCategories, createGameSession, getProfile, getPublicSettings, getGameHistory } from '../api';
 import { useAuth } from '../store/authStore';
 
 // Legacy map for old-style icon_name strings; new categories store the emoji directly
@@ -20,35 +22,125 @@ const resolveIcon = name => LEGACY_ICON_MAP[name] || name || '📚';
 
 const MIN_STAKE = 500;
 const MAX_STAKE = 5000;
+const REQUIRED_CATEGORIES = 7;
+const EMPTY_CATEGORIES = [];
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function categoriesStorageKey(userId) {
+  return `last_selected_categories:${userId || 'guest'}`;
+}
 
 export default function CategorySelectionScreen({ navigation }) {
   const { user } = useAuth();
   const [selected, setSelected]     = useState([]);
   const [stakeInput, setStakeInput] = useState('');
   const [loading, setLoading]       = useState(false);
+  const restoredRef = useRef(false);
 
-  const { data: catData, isLoading } = useQuery({ queryKey: ['categories'], queryFn: getCategories });
+  const { data: catData, isLoading, refetch: refetchCategories } = useQuery({
+    queryKey: ['categories'],
+    queryFn: getCategories,
+    staleTime: 0,
+  });
   const { data: profileData }        = useQuery({ queryKey: ['profile'], queryFn: getProfile });
+  const { data: settingsData }       = useQuery({ queryKey: ['public-settings'], queryFn: getPublicSettings });
+  const { data: historyData }        = useQuery({ queryKey: ['history'], queryFn: getGameHistory });
   
-  const categories = catData?.data || [];
+  useFocusEffect(
+    React.useCallback(() => {
+      refetchCategories();
+    }, [refetchCategories])
+  );
+
+  const categories = catData?.data || EMPTY_CATEGORIES;
+  const playableIds = new Set(categories.filter(c => !c.exhausted).map(c => c.id));
+  const playableCount = playableIds.size;
   const balance    = parseFloat(profileData?.data?.wallet_balance || user?.wallet_balance || 0);
 
+  useEffect(() => {
+    if (restoredRef.current || !categories.length) return;
+    let cancelled = false;
+
+    (async () => {
+      let ids = [];
+      try {
+        const raw = await AsyncStorage.getItem(categoriesStorageKey(user?.id));
+        const stored = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(stored)) ids = stored.filter(id => playableIds.has(id));
+      } catch {
+        ids = [];
+      }
+
+      if (!ids.length) {
+        const lastGame = (historyData?.data || []).find(g => Array.isArray(g.selected_category_ids) && g.selected_category_ids.length);
+        if (lastGame) ids = lastGame.selected_category_ids.filter(id => playableIds.has(id));
+      }
+
+      if (cancelled) return;
+
+      if (ids.length) {
+        restoredRef.current = true;
+        setSelected(s => (s.length ? s : ids.slice(0, REQUIRED_CATEGORIES)));
+        return;
+      }
+
+      // Wait for history before giving up — last game is the fallback
+      if (historyData !== undefined) restoredRef.current = true;
+    })();
+
+    return () => { cancelled = true; };
+  }, [categories, historyData, user?.id]);
+
+  useEffect(() => {
+    setSelected(s => {
+      const next = s.filter(id => playableIds.has(id));
+      if (next.length === s.length) return s;
+      persistSelection(next);
+      return next;
+    });
+  }, [categories]);
+
+  function persistSelection(ids) {
+    AsyncStorage.setItem(categoriesStorageKey(user?.id), JSON.stringify(ids)).catch(() => {});
+  }
+
   function toggleCategory(id) {
+    if (!playableIds.has(id)) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelected(s => {
-      if (s.includes(id)) return s.filter(i => i !== id);
-      if (s.length >= 5)  return s;
-      return [...s, id];
+      const next = s.includes(id)
+        ? s.filter(i => i !== id)
+        : s.length >= REQUIRED_CATEGORIES
+          ? s
+          : [...s, id];
+      persistSelection(next);
+      return next;
     });
   }
 
   const stake        = parseFloat(stakeInput) || 0;
   const stakeValid   = stake >= MIN_STAKE && stake <= MAX_STAKE;
   const hasEnoughBalance = stake <= balance;
-  const canStart     = selected.length === 5 && stakeValid && hasEnoughBalance;
-  const potentialWin = stake * 2;
+  const canStart     = selected.length === REQUIRED_CATEGORIES && stakeValid && hasEnoughBalance;
+  const settings     = settingsData?.data || {};
+  const taxRate      = parseFloat(settings.user_win_tax_percentage || '0.05');
+  const payoutPerfect = parseFloat(settings.payout_perfect || '2.0');
+  const payoutNine    = parseFloat(settings.payout_nine || '0.5');
+
+  function netAfterTax(gross) {
+    if (!(gross > 0) || !(stake > 0)) return 0;
+    const winnings = gross > stake ? gross - stake : gross;
+    const tax = Math.round(winnings * taxRate * 100) / 100;
+    return Math.round((gross - tax) * 100) / 100;
+  }
+
+  const perfectGross = stake * payoutPerfect;
+  const nineGross    = stake * payoutNine;
+  const perfectNet   = netAfterTax(perfectGross);
+  const nineNet      = netAfterTax(nineGross);
+  const potentialWin = perfectNet;
+  const taxPercentLabel = `${Math.round(taxRate * 100)}% tax`;
 
   async function handleStart() {
     if (!canStart) return;
@@ -58,6 +150,7 @@ export default function CategorySelectionScreen({ navigation }) {
         category_ids: selected,
         stake_amount: stake,
       });
+      persistSelection(selected);
       navigation.replace('Game', {
         sessionId:    res.data.sessionId,
         sessionToken: res.data.sessionToken,
@@ -66,6 +159,10 @@ export default function CategorySelectionScreen({ navigation }) {
         gameDuration: res.data.gameDuration,
       });
     } catch (err) {
+      const code = err?.error?.code;
+      if (code === 'CATEGORY_EXHAUSTED' || code === 'INSUFFICIENT_QUESTIONS') {
+        refetchCategories();
+      }
       Alert.alert('Error', err?.error?.message || 'Could not start game. Check your wallet balance.');
     } finally {
       setLoading(false);
@@ -80,8 +177,16 @@ export default function CategorySelectionScreen({ navigation }) {
           <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginBottom: 12 }}>
             <Text style={{ color: colors.white50, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>Select 5 Categories</Text>
-          <Text style={styles.sub}>Choose exactly 5 categories to play from ({selected.length}/5)</Text>
+          <Text style={styles.title}>Select {REQUIRED_CATEGORIES} Categories</Text>
+          <Text style={styles.sub}>Choose exactly {REQUIRED_CATEGORIES} categories to play from ({selected.length}/{REQUIRED_CATEGORIES})</Text>
+          {playableCount < REQUIRED_CATEGORIES && !isLoading && (
+            <Text style={styles.exhaustedWarn}>
+              You need {REQUIRED_CATEGORIES} categories with unused questions to start. You've completed {categories.filter(c => c.exhausted).length} categor{categories.filter(c => c.exhausted).length === 1 ? 'y' : 'ies'}.
+            </Text>
+          )}
+          {categories.some(c => c.exhausted) && playableCount >= REQUIRED_CATEGORIES && (
+            <Text style={styles.exhaustedHint}>Greyed-out categories have no unused questions left for you.</Text>
+          )}
 
           {/* Categories grid */}
           {isLoading ? (
@@ -90,27 +195,39 @@ export default function CategorySelectionScreen({ navigation }) {
             <View style={styles.grid}>
               {categories.map(cat => {
                 const isSelected = selected.includes(cat.id);
+                const exhausted = !!cat.exhausted;
                 return (
                   <TouchableOpacity
                     key={cat.id}
                     onPress={() => toggleCategory(cat.id)}
-                    activeOpacity={0.8}
-                    style={[styles.catCard, isSelected && styles.catCardSelected]}
+                    disabled={exhausted}
+                    activeOpacity={exhausted ? 1 : 0.8}
+                    style={[
+                      styles.catCard,
+                      isSelected && styles.catCardSelected,
+                      exhausted && styles.catCardExhausted,
+                    ]}
                   >
-                    {isSelected && (
+                    {isSelected && !exhausted && (
                       <LinearGradient
                         colors={[colors.blue, colors.teal]}
                         style={StyleSheet.absoluteFill}
                         start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
                       />
                     )}
-                    <Text style={styles.catIcon}>{resolveIcon(cat.icon_name)}</Text>
-                    <Text style={[styles.catName, isSelected && styles.catNameSelected]}>{cat.name}</Text>
-                    {isSelected && (
+                    <Text style={[styles.catIcon, exhausted && { opacity: 0.35 }]}>{resolveIcon(cat.icon_name)}</Text>
+                    <Text style={[
+                      styles.catName,
+                      isSelected && styles.catNameSelected,
+                      exhausted && styles.catNameExhausted,
+                    ]}>{cat.name}</Text>
+                    {exhausted ? (
+                      <Text style={styles.exhaustedLabel}>Completed</Text>
+                    ) : isSelected ? (
                       <View style={styles.checkBadge}>
                         <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>✓</Text>
                       </View>
-                    )}
+                    ) : null}
                   </TouchableOpacity>
                 );
               })}
@@ -176,10 +293,12 @@ export default function CategorySelectionScreen({ navigation }) {
             {stake > 0 && stakeValid && hasEnoughBalance && (
               <View style={styles.payoutInfo}>
                 <Text style={styles.payoutLine}>
-                  Perfect score (10/10): <Text style={{ color: colors.green, fontWeight: '700' }}>{fmt(stake * 2)}</Text>
+                  Perfect score (10/10): <Text style={{ color: colors.green, fontWeight: '700' }}>{fmt(perfectNet)}</Text>
+                  <Text style={{ color: colors.white30 }}> after {taxPercentLabel}</Text>
                 </Text>
                 <Text style={styles.payoutLine}>
-                  9/10 score: <Text style={{ color: colors.teal, fontWeight: '700' }}>{fmt(stake * 0.5)}</Text>
+                  9/10 score: <Text style={{ color: colors.teal, fontWeight: '700' }}>{fmt(nineNet)}</Text>
+                  <Text style={{ color: colors.white30 }}> after {taxPercentLabel}</Text>
                 </Text>
                 <Text style={[styles.payoutLine, { color: colors.white30 }]}>
                   ≤ 8/10: ₦0.00 (stake lost)
@@ -213,8 +332,8 @@ export default function CategorySelectionScreen({ navigation }) {
               {loading
                 ? <ActivityIndicator color="#fff" />
                 : <Text style={styles.startBtnText}>
-                    {selected.length < 5
-                      ? `Select ${5 - selected.length} more categor${5 - selected.length === 1 ? 'y' : 'ies'}`
+                    {selected.length < REQUIRED_CATEGORIES
+                      ? `Select ${REQUIRED_CATEGORIES - selected.length} more categor${REQUIRED_CATEGORIES - selected.length === 1 ? 'y' : 'ies'}`
                       : !stakeValid
                         ? `Enter stake (₦${MIN_STAKE.toLocaleString('en-NG')}–₦${MAX_STAKE.toLocaleString('en-NG')})`
                         : !hasEnoughBalance
@@ -232,7 +351,9 @@ export default function CategorySelectionScreen({ navigation }) {
 const styles = StyleSheet.create({
   scroll:    { paddingHorizontal: 20, paddingTop: 16 },
   title:     { fontSize: 24, fontWeight: '800', color: colors.light, marginBottom: 6 },
-  sub:       { fontSize: 14, color: colors.white50, marginBottom: 24 },
+  sub:       { fontSize: 14, color: colors.white50, marginBottom: 8 },
+  exhaustedHint: { fontSize: 12, color: colors.white30, marginBottom: 20 },
+  exhaustedWarn: { fontSize: 13, color: colors.yellow, marginBottom: 20, lineHeight: 18 },
   grid:      { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
   catCard: {
     width: '47%', borderRadius: 18, padding: 16,
@@ -243,6 +364,13 @@ const styles = StyleSheet.create({
   catIcon:        { fontSize: 32, marginBottom: 8 },
   catName:        { fontSize: 14, fontWeight: '700', color: colors.white50, textAlign: 'center' },
   catNameSelected: { color: '#fff' },
+  catCardExhausted: {
+    backgroundColor: '#2A3238',
+    borderColor: 'rgba(255,255,255,0.04)',
+    opacity: 0.7,
+  },
+  catNameExhausted: { color: '#8A9399' },
+  exhaustedLabel: { fontSize: 10, color: '#8A9399', fontWeight: '700', marginTop: 4, textTransform: 'uppercase' },
   checkBadge: {
     position: 'absolute', top: 8, right: 8,
     width: 20, height: 20, borderRadius: 10,

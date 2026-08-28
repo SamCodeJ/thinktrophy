@@ -192,7 +192,7 @@ export default function GameScreen({ navigation, route }) {
         session_token: sessionToken,
       });
 
-      const { gameComplete, score, payout, stakeAmount,
+      const { gameComplete, score, payout, stakeAmount, taxAmount, grossPayout,
               question: nextQ, questionNumber: nextNum } = res.data;
 
       // Brief pause so the user sees their selection highlighted, then move on
@@ -200,7 +200,7 @@ export default function GameScreen({ navigation, route }) {
         if (gameComplete) {
           gameEndedRef.current = true;
           clearInterval(timerRef.current);
-          navigation.replace('Result', { sessionId, score, payout, stakeAmount });
+          navigation.replace('Result', { sessionId, score, payout, stakeAmount, taxAmount, grossPayout });
         } else {
           setQuestion(nextQ);
           setQuestionNum(nextNum);

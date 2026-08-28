@@ -8,7 +8,7 @@ const steps = [
   { icon: '📲', text: 'Download the app from the App Store or Google Play' },
   { icon: '🔑', text: 'Log in using the email and password you just created' },
   { icon: '💰', text: 'Fund your wallet with any amount from ₦500' },
-  { icon: '🏆', text: 'Pick a category, stake your amount, and start playing!' },
+  { icon: '🏆', text: 'Pick 7 categories, stake your amount, and start playing!' },
 ];
 
 export default function Download() {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Share
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,14 +9,15 @@ import { format } from 'date-fns';
 import * as Clipboard from 'expo-clipboard';
 import { colors } from '../utils/theme';
 import { useAuth } from '../store/authStore';
-import { getProfile, getGameHistory, logout, updatePassword } from '../api';
+import { getProfile, logout, updatePassword } from '../api';
+import { buildReferralLink } from '../utils/referral';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const BADGES = [
   { id: 'first_game',     label: 'First Game',      emoji: '🎮', condition: p => p.total_games_played >= 1 },
   { id: 'first_win',      label: 'First Win',        emoji: '🏆', condition: p => parseFloat(p.total_won) > 0 },
-  { id: 'perfect_score',  label: 'Perfect Score',    emoji: '💯', condition: p => p.total_games_played >= 1 },
+  { id: 'perfect_score',  label: 'Perfect Score',    emoji: '💯', condition: p => (p.best_score || 0) >= 10 },
   { id: 'high_roller',    label: 'High Roller',      emoji: '💰', condition: p => parseFloat(p.total_staked) >= 100 },
   { id: 'ten_games',      label: '10 Games Played',  emoji: '🎯', condition: p => p.total_games_played >= 10 },
   { id: 'big_winner',     label: 'Big Winner',       emoji: '🤑', condition: p => parseFloat(p.total_won) >= 50 },
@@ -30,16 +31,10 @@ export default function ProfileScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
 
   const { data: profileData } = useQuery({ queryKey: ['profile'],  queryFn: getProfile });
-  const { data: historyData } = useQuery({ queryKey: ['history'],  queryFn: getGameHistory });
 
-  const profile  = profileData?.data;
-  const history  = historyData?.data || [];
-  const winRate  = profile?.total_games_played > 0
-    ? Math.round((history.filter(g => parseFloat(g.payout_amount) > 0).length / history.length) * 100)
-    : 0;
-  const bestScore = history.reduce((max, g) => Math.max(max, g.score || 0), 0);
-
-  const earnedBadges = BADGES.filter(b => profile && b.condition(profile));
+  const profile   = profileData?.data;
+  const winRate   = profile?.win_rate ?? 0;
+  const bestScore = profile?.best_score ?? 0;
 
   async function handleChangePassword() {
     if (!pwForm.old_password || !pwForm.new_password) {
@@ -72,11 +67,25 @@ export default function ProfileScreen({ navigation }) {
     ]);
   }
 
-  async function handleCopyReferralCode() {
-    if (profile?.referral_code) {
-      await Clipboard.setStringAsync(profile.referral_code);
-      Alert.alert('Copied!', 'Referral code copied to clipboard.');
+  async function handleShareReferral() {
+    const link = buildReferralLink(profile?.referral_code);
+    if (!link) return;
+    try {
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { message: 'Join me on ThinkTrophy!', url: link }
+          : { message: `Join me on ThinkTrophy! ${link}`, title: 'ThinkTrophy' }
+      );
+    } catch {
+      // User dismissed the share sheet
     }
+  }
+
+  async function handleCopyReferralLink() {
+    const link = buildReferralLink(profile?.referral_code);
+    if (!link) return;
+    await Clipboard.setStringAsync(link);
+    Alert.alert('Copied!', 'Referral link copied to clipboard.');
   }
 
   if (!profile) return null;
@@ -94,11 +103,20 @@ export default function ProfileScreen({ navigation }) {
             <Text style={styles.memberSince}>Member since {format(new Date(profile.created_at), 'MMMM yyyy')}</Text>
             
             {profile.referral_code && (
-              <TouchableOpacity onPress={handleCopyReferralCode} style={styles.referralBtn}>
-                <Text style={styles.referralLabel}>Referral Code:</Text>
-                <Text style={styles.referralCode}>{profile.referral_code}</Text>
-                <Text style={styles.referralCopy}>📋</Text>
-              </TouchableOpacity>
+              <View style={styles.referralCard}>
+                <Text style={styles.referralLabel}>Referral Link</Text>
+                <Text style={styles.referralLink} numberOfLines={1}>
+                  {buildReferralLink(profile.referral_code)}
+                </Text>
+                <View style={styles.referralActions}>
+                  <TouchableOpacity onPress={handleShareReferral} style={styles.referralShareBtn} activeOpacity={0.8}>
+                    <Text style={styles.referralShareText}>Share</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={handleCopyReferralLink} style={styles.referralCopyBtn} activeOpacity={0.8}>
+                    <Text style={styles.referralCopyText}>Copy</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             )}
           </View>
 
@@ -109,7 +127,7 @@ export default function ProfileScreen({ navigation }) {
               { label: 'Win Rate',      value: `${winRate}%`,              color: colors.teal },
               { label: 'Total Staked',  value: fmt(profile.total_staked),  color: colors.yellow },
               { label: 'Total Earned',  value: fmt(profile.total_won),     color: colors.green },
-              { label: 'Best Score',    value: `${bestScore}/10`,          color: colors.teal },
+              { label: 'Best Score',    value: `${bestScore}/10`,         color: colors.teal },
               { label: 'Balance',       value: fmt(profile.wallet_balance), color: colors.blue },
             ].map(s => (
               <View key={s.label} style={styles.statCard}>
@@ -209,10 +227,23 @@ const styles = StyleSheet.create({
   avatarText:  { fontSize: 36, fontWeight: '900', color: '#fff' },
   username:    { fontSize: 22, fontWeight: '800', color: colors.light },
   memberSince: { fontSize: 13, color: colors.white30, marginTop: 4 },
-  referralBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, marginTop: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  referralLabel: { fontSize: 12, color: colors.white50, marginRight: 6 },
-  referralCode: { fontSize: 14, fontWeight: '700', color: colors.teal, marginRight: 6 },
-  referralCopy: { fontSize: 14 },
+  referralCard: {
+    width: '100%', marginTop: 16, backgroundColor: colors.card, borderRadius: 16,
+    padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  },
+  referralLabel: { fontSize: 12, color: colors.white50, marginBottom: 6, fontWeight: '600' },
+  referralLink: { fontSize: 13, fontWeight: '600', color: colors.teal, marginBottom: 12 },
+  referralActions: { flexDirection: 'row', gap: 8 },
+  referralShareBtn: {
+    flex: 1, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.blue,
+  },
+  referralShareText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  referralCopyBtn: {
+    flex: 1, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  },
+  referralCopyText: { color: colors.light, fontWeight: '700', fontSize: 14 },
   statsGrid:   { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 28 },
   statCard: {
     width: '31%', backgroundColor: colors.card, borderRadius: 16, padding: 14,

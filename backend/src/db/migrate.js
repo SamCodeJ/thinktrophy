@@ -178,6 +178,34 @@ CREATE TABLE IF NOT EXISTS transactions (
 ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
 ALTER TABLE transactions ADD CONSTRAINT transactions_type_check CHECK (type IN ('deposit','stake','payout','withdrawal','referral_bonus','tax_deduction'));
 
+ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12,2) DEFAULT 0.00;
+
+CREATE TABLE IF NOT EXISTS user_seen_questions (
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  question_id UUID NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+  seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, question_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_seen_questions_user ON user_seen_questions(user_id);
+
+INSERT INTO user_seen_questions (user_id, question_id)
+SELECT DISTINCT gs.user_id, (ans->>'question_id')::uuid
+FROM game_sessions gs
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(gs.answers_submitted, '[]'::jsonb)) ans
+WHERE ans->>'question_id' IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+-- Also mark questions that were shown (including expired games with no answer yet)
+INSERT INTO user_seen_questions (user_id, question_id)
+SELECT DISTINCT gs.user_id, qid
+FROM game_sessions gs
+CROSS JOIN LATERAL unnest(
+  CASE WHEN gs.active_track = 'a' THEN gs.question_ids_track_a ELSE gs.question_ids_track_b END
+) WITH ORDINALITY AS t(qid, ord)
+WHERE qid IS NOT NULL
+  AND ord <= LEAST(GREATEST(COALESCE(gs.current_question_index, 0) + 1, 1), 10)
+ON CONFLICT DO NOTHING;
+
 CREATE INDEX IF NOT EXISTS idx_transactions_user   ON transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_type   ON transactions(type);
 CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);

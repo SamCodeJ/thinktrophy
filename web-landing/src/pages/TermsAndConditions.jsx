@@ -175,14 +175,14 @@ export default function TermsAndConditions() {
               </ul>
 
               <h3 className="text-lg font-bold text-brand-dark dark:text-white mt-6">5.2 Category Selection</h3>
-              <p>Users must select at least 7 categories. Questions are randomly selected and drawn from your selected categories. We aim to provide each user with a unique and non-repetitive question experience; however, repetition is not entirely guaranteed.</p>
+              <p>Users must select exactly 7 categories. Questions are randomly selected and drawn from your selected categories. We aim to provide each user with a unique and non-repetitive question experience; however, repetition is not entirely guaranteed.</p>
 
               <h3 className="text-lg font-bold text-brand-dark dark:text-white mt-6">5.3 Entry Process</h3>
               <p>To participate in a Competition, you must:</p>
               <ul className="list-disc pl-6 space-y-2">
                 <li>hold a valid and active User Account;</li>
                 <li>have strong and working network;</li>
-                <li>select an available category on the Platform;</li>
+                <li>select 7 categories on the Platform;</li>
                 <li>choose Stake (₦500 – ₦5,000) and confirm participation.</li>
               </ul>
               <p>Entry into a Competition is confirmed only upon registration and successful payment or available funds in your account. Stake is deducted and ring-fenced before the game begins.</p>

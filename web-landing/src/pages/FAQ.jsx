@@ -38,7 +38,7 @@ export default function FAQ() {
 
             <div className="space-y-3">
               <h3 className="text-lg font-bold text-brand-dark dark:text-white">How do I play?</h3>
-              <p>Simply select a game category, stake your desired amount, and answer 10 academic-quality questions. Your reward is calculated based on your final score.</p>
+              <p>Simply select 7 game categories, stake your desired amount, and answer 10 academic-quality questions. Your reward is calculated based on your final score.</p>
             </div>
           </section>
 

@@ -1,11 +1,11 @@
-const { getActiveCategories } = require('../services/questionService');
+const { getCategoriesForUser } = require('../services/questionService');
 const { createSession, submitAnswer, getSessionResult } = require('../services/gameService');
 const { query } = require('../db/connection');
 const { AppError } = require('../middleware/errorHandler');
 
 async function listCategories(req, res, next) {
   try {
-    const categories = await getActiveCategories();
+    const categories = await getCategoriesForUser(req.user.userId);
     res.json({ success: true, data: categories });
   } catch (err) { next(err); }
 }
@@ -78,7 +78,9 @@ async function getResult(req, res, next) {
         sessionId:    session.id,
         score:        session.score,
         totalQuestions: 10,
-        payout:       parseFloat(session.payout_amount),
+        payout:       Math.round(((parseFloat(session.payout_amount) || 0) - (parseFloat(session.tax_amount || 0) || 0)) * 100) / 100,
+        grossPayout:  parseFloat(session.payout_amount),
+        taxAmount:    parseFloat(session.tax_amount || 0),
         stakeAmount:  parseFloat(session.stake_amount),
         status:       session.status,
         startedAt:    session.started_at,

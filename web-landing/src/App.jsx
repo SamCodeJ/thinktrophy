@@ -4,6 +4,7 @@ import Footer from './components/Footer';
 import Home from './pages/Home';
 import SignUp from './pages/SignUp';
 import Download from './pages/Download';
+import Referral from './pages/Referral';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import PaymentPolicy from './pages/PaymentPolicy';
 import IntegrityPolicy from './pages/IntegrityPolicy';
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/"          element={<Home />} />
           <Route path="/signup"    element={<SignUp />} />
           <Route path="/download"  element={<Download />} />
+          <Route path="/r/:code"   element={<Referral />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/payment-policy" element={<PaymentPolicy />} />
           <Route path="/integrity-policy" element={<IntegrityPolicy />} />

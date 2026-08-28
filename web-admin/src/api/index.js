@@ -49,6 +49,8 @@ export const updateUserStatus = (id, data) => client.put(`/api/admin/users/${id}
 // Game Sessions
 export const getGameSessions = (params) => client.get('/api/admin/game-sessions', { params });
 export const getGameSessionDetail = (id) => client.get(`/api/admin/game-sessions/${id}`);
+export const correctGameSessionAnswer = (id, data) =>
+  client.post(`/api/admin/game-sessions/${id}/correct-answer`, data);
 
 // Settings
 export const getSettings = () => client.get('/api/admin/settings');

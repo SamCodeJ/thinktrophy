@@ -119,7 +119,7 @@ export default function Settings() {
             <div>
               <label className="block text-sm text-white/60 mb-1.5">User Win Tax (UWT)</label>
               <input className="input" type="number" min="0" step="0.01" max="1" value={form.user_win_tax_percentage} onChange={e => set('user_win_tax_percentage', e.target.value)} />
-              <p className="text-xs text-white/30 mt-1">Percentage of a player's profit deducted as tax (e.g., 0.05 for 5%)</p>
+              <p className="text-xs text-white/30 mt-1">Percentage of winnings deducted as tax for 10/10 and 9/10 (e.g. 0.05 for 5%). The original stake is not taxed.</p>
             </div>
             <div>
               <label className="block text-sm text-white/60 mb-1.5">Referral Win Percentage</label>

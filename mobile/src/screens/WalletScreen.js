@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   TextInput, Alert, ActivityIndicator, Modal,
-  Platform, Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView
+  Platform, Keyboard, TouchableWithoutFeedback,
+  Dimensions, useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
@@ -15,6 +16,32 @@ import { colors } from '../utils/theme';
 import { getWallet, getProfile, deposit, verifyPayment, withdraw, getBanks, resolveAccount } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// RN Modal is a separate Android window. Expo Go often resizes with the keyboard;
+// production edge-to-edge builds usually do not, so the keypad covers the sheet.
+function useKeyboardOverlap() {
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const { height: windowHeight } = useWindowDimensions();
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, e => setKeyboardHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  if (keyboardHeight <= 0) return 0;
+
+  const alreadyShrunk = Math.max(0, Dimensions.get('screen').height - windowHeight);
+  if (alreadyShrunk >= keyboardHeight * 0.5) {
+    return Math.max(0, keyboardHeight - alreadyShrunk);
+  }
+  return keyboardHeight;
+}
 
 function TxRow({ tx }) {
   const typeIcon = { deposit: '⬇️', stake: '🎮', payout: '💰', withdrawal: '⬆️', referral_bonus: '🎁', tax_deduction: '🏛️' };
@@ -27,22 +54,32 @@ function TxRow({ tx }) {
     tax_deduction: colors.red,
   };
   
+  const meta = typeof tx.metadata === 'string'
+    ? (() => { try { return JSON.parse(tx.metadata); } catch { return {}; } })()
+    : (tx.metadata || {});
+  const isDispute = !!meta.dispute_correction;
+
   let displayName = tx.type.charAt(0).toUpperCase() + tx.type.slice(1);
   if (tx.type === 'referral_bonus') displayName = 'Referral Bonus';
-  if (tx.type === 'tax_deduction') displayName = 'User Win Tax';
+  if (tx.type === 'tax_deduction') displayName = isDispute ? 'Dispute Tax Adj.' : 'User Win Tax';
+  if (tx.type === 'payout' && isDispute) displayName = 'Dispute Payout';
+
+  const isDebit =
+    meta.wallet_effect === 'debit' ||
+    (!meta.wallet_effect && (tx.type === 'stake' || tx.type === 'withdrawal' || tx.type === 'tax_deduction'));
 
   return (
     <View style={styles.txRow}>
       <View style={styles.txIcon}>
-        <Text style={{ fontSize: 18 }}>{typeIcon[tx.type] || '💳'}</Text>
+        <Text style={{ fontSize: 18 }}>{isDispute ? '⚖️' : (typeIcon[tx.type] || '💳')}</Text>
       </View>
       <View style={styles.txInfo}>
         <Text style={styles.txType}>{displayName}</Text>
         <Text style={styles.txDate}>{format(new Date(tx.created_at), 'MMM d, yyyy HH:mm')}</Text>
       </View>
       <View style={{ alignItems: 'flex-end' }}>
-        <Text style={[styles.txAmount, { color: typeColor[tx.type] || colors.light }]}>
-          {tx.type === 'stake' || tx.type === 'withdrawal' || tx.type === 'tax_deduction' ? '−' : '+'}{fmt(tx.amount)}
+        <Text style={[styles.txAmount, { color: isDebit ? colors.red : (typeColor[tx.type] || colors.light) }]}>
+          {isDebit ? '−' : '+'}{fmt(tx.amount)}
         </Text>
         <Text style={styles.txStatus}>{tx.status}</Text>
       </View>
@@ -52,6 +89,12 @@ function TxRow({ tx }) {
 
 export default function WalletScreen() {
   const qc = useQueryClient();
+  const insets = useSafeAreaInsets();
+  const kbOverlap = useKeyboardOverlap();
+  const sheetBottom = {
+    marginBottom: kbOverlap,
+    paddingBottom: 28 + (kbOverlap > 0 ? 8 : insets.bottom),
+  };
 
   // Refresh balance every time this tab comes into view
   useFocusEffect(
@@ -64,21 +107,32 @@ export default function WalletScreen() {
   const { data: walletData, isLoading } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
   const { data: profileData } = useQuery({ queryKey: ['profile'], queryFn: getProfile });
   const { data: banksData, isLoading: loadingBanks } = useQuery({ queryKey: ['banks'], queryFn: getBanks });
-  
-  const balance      = walletData?.data?.balance || 0;
-  const transactions = walletData?.data?.transactions || [];
-  const userEmail    = profileData?.data?.email || 'user@example.com';
-  const userName     = profileData?.data?.username || 'User';
 
   const [depositModal, setDepositModal]   = useState(false);
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [depositAmount, setDepositAmount] = useState('');
   const [withdrawForm, setWithdrawForm]   = useState({ amount: '', account_number: '', account_name: '', bank_code: '', bank_name: '' });
   const [bankModal, setBankModal]         = useState(false);
-  
+  const [bankSearch, setBankSearch]       = useState('');
   const [paymentRef, setPaymentRef] = useState(null);
   const [paymentLink, setPaymentLink] = useState(null);
   const verifyingRef = useRef(false);
+
+  const balance      = walletData?.data?.balance || 0;
+  const transactions = walletData?.data?.transactions || [];
+  const userEmail    = profileData?.data?.email || 'user@example.com';
+  const userName     = profileData?.data?.username || 'User';
+  const banks        = (banksData?.data || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const bankQuery    = bankSearch.trim().toLowerCase();
+  const filteredBanks = bankQuery
+    ? banks.filter(b => (b.name || '').toLowerCase().includes(bankQuery))
+    : banks;
+
+  function closeBankModal() {
+    Keyboard.dismiss();
+    setBankModal(false);
+    setBankSearch('');
+  }
 
   const depositMut = useMutation({
     mutationFn: () => deposit({ amount: parseFloat(depositAmount) }),
@@ -257,12 +311,19 @@ export default function WalletScreen() {
         </ScrollView>
 
         {/* Deposit Modal */}
-        <Modal visible={depositModal} transparent animationType="slide" onRequestClose={() => setDepositModal(false)}>
-          <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Modal
+          visible={depositModal}
+          transparent
+          animationType="slide"
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={() => setDepositModal(false)}
+        >
+          <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
               <View style={styles.modalBackdrop} />
             </TouchableWithoutFeedback>
-            <View style={styles.modalCard}>
+            <View style={[styles.modalCard, sheetBottom]}>
               <Text style={styles.modalTitle}>Deposit Funds</Text>
               <Text style={styles.label}>Amount (₦)</Text>
               <TextInput
@@ -287,19 +348,27 @@ export default function WalletScreen() {
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
             </View>
-          </KeyboardAvoidingView>
+          </View>
         </Modal>
 
         {/* Withdraw Modal */}
-        <Modal visible={withdrawModal} transparent animationType="slide" onRequestClose={() => setWithdrawModal(false)}>
-          <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Modal
+          visible={withdrawModal}
+          transparent
+          animationType="slide"
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={() => setWithdrawModal(false)}
+        >
+          <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
               <View style={styles.modalBackdrop} />
             </TouchableWithoutFeedback>
             <ScrollView
               keyboardShouldPersistTaps="handled"
               bounces={false}
-              contentContainerStyle={styles.modalCard}
+              style={{ marginBottom: kbOverlap }}
+              contentContainerStyle={[styles.modalCard, { paddingBottom: 28 + (kbOverlap > 0 ? 8 : insets.bottom) }]}
             >
               <Text style={styles.modalTitle}>Withdraw Funds</Text>
               
@@ -307,7 +376,7 @@ export default function WalletScreen() {
                 <Text style={styles.label}>Bank</Text>
                 <TouchableOpacity 
                   style={[styles.input, { justifyContent: 'center' }]} 
-                  onPress={() => setBankModal(true)}
+                  onPress={() => { setBankSearch(''); setBankModal(true); }}
                 >
                   <Text style={{ color: withdrawForm.bank_name ? colors.light : colors.white30, fontSize: 15 }}>
                     {withdrawForm.bank_name || 'Select Bank'}
@@ -366,40 +435,66 @@ export default function WalletScreen() {
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
             </ScrollView>
-          </KeyboardAvoidingView>
+          </View>
         </Modal>
 
         {/* Bank Selection Modal */}
-        <Modal visible={bankModal} transparent animationType="slide" onRequestClose={() => setBankModal(false)}>
-          <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <TouchableWithoutFeedback onPress={() => setBankModal(false)}>
+        <Modal
+          visible={bankModal}
+          transparent
+          animationType="slide"
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={closeBankModal}
+        >
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={closeBankModal}>
               <View style={styles.modalBackdrop} />
             </TouchableWithoutFeedback>
-            <View style={[styles.modalCard, { height: '70%' }]}>
+            <View style={[styles.modalCard, { height: '70%' }, sheetBottom]}>
               <Text style={styles.modalTitle}>Select Bank</Text>
+              <TextInput
+                style={[styles.input, { marginBottom: 12 }]}
+                placeholder="Search banks"
+                placeholderTextColor={colors.white30}
+                value={bankSearch}
+                onChangeText={setBankSearch}
+                autoFocus
+                autoCorrect={false}
+                autoCapitalize="none"
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+              />
               {loadingBanks ? (
                 <ActivityIndicator color={colors.blue} style={{ marginTop: 40 }} />
               ) : (
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  {(banksData?.data || []).sort((a, b) => a.name.localeCompare(b.name)).map(bank => (
-                    <TouchableOpacity 
-                      key={bank.code}
-                      style={{ paddingVertical: 16, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }}
-                      onPress={() => {
-                        setWithdrawForm(x => ({ ...x, bank_code: bank.code, bank_name: bank.name }));
-                        setBankModal(false);
-                      }}
-                    >
-                      <Text style={{ color: colors.light, fontSize: 16 }}>{bank.name}</Text>
-                    </TouchableOpacity>
-                  ))}
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {filteredBanks.length === 0 ? (
+                    <Text style={styles.empty}>No banks match “{bankSearch.trim()}”</Text>
+                  ) : (
+                    filteredBanks.map(bank => (
+                      <TouchableOpacity 
+                        key={`${bank.code}-${bank.name}`}
+                        style={{ paddingVertical: 16, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }}
+                        onPress={() => {
+                          setWithdrawForm(x => ({ ...x, bank_code: bank.code, bank_name: bank.name }));
+                          closeBankModal();
+                        }}
+                      >
+                        <Text style={{ color: colors.light, fontSize: 16 }}>{bank.name}</Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
                 </ScrollView>
               )}
-              <TouchableOpacity onPress={() => setBankModal(false)} style={styles.cancelBtn}>
+              <TouchableOpacity onPress={closeBankModal} style={styles.cancelBtn}>
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
             </View>
-          </KeyboardAvoidingView>
+          </View>
         </Modal>
       </SafeAreaView>
     </LinearGradient>

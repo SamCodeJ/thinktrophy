@@ -7,25 +7,37 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../utils/theme';
 import { register } from '../api';
-import { useAuth } from '../store/authStore';
+import { normalizeReferralCode } from '../utils/referral';
+import {
+  clearPendingReferralCode,
+  getPendingReferralCode,
+  savePendingReferralCode,
+} from '../store/referralStore';
 
 export default function RegisterScreen({ navigation, route }) {
-  const { signIn } = useAuth();
   const [form, setForm]       = useState({ 
     username: '', email: '', phone_number: '', password: '', confirm_password: '',
-    first_name: '', last_name: '', dob: '', referral_code: route.params?.referral || '' 
+    first_name: '', last_name: '', dob: '', referral_code: normalizeReferralCode(route.params?.referral) || '' 
   });
+  const [referralLocked, setReferralLocked] = useState(!!normalizeReferralCode(route.params?.referral));
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Update referral code if the route param changes
   React.useEffect(() => {
-    if (route.params?.referral) {
-      setForm(f => ({ ...f, referral_code: route.params.referral }));
-    }
+    let cancelled = false;
+    (async () => {
+      const fromRoute = normalizeReferralCode(route.params?.referral);
+      const stored = fromRoute || await getPendingReferralCode();
+      if (cancelled || !stored) return;
+      setForm(f => ({ ...f, referral_code: stored }));
+      setReferralLocked(true);
+      await savePendingReferralCode(stored);
+    })();
+    return () => { cancelled = true; };
   }, [route.params?.referral]);
 
   const set = (k, v) => {
+    if (k === 'referral_code' && referralLocked) return;
     if (k === 'dob') {
       // Auto-format date as YYYY-MM-DD
       const cleaned = v.replace(/\D/g, '');
@@ -55,6 +67,7 @@ export default function RegisterScreen({ navigation, route }) {
     setLoading(true);
     try {
       const res = await register(form);
+      await clearPendingReferralCode();
       Alert.alert('Success', res.data.message, [
         { text: 'OK', onPress: () => navigation.navigate('Login') }
       ]);
@@ -88,13 +101,13 @@ export default function RegisterScreen({ navigation, route }) {
                 { key: 'dob',          label: 'Date of Birth (YYYY-MM-DD)', placeholder: '2000-01-01', keyboard: 'number-pad', auto: 'none', maxLength: 10 },
                 { key: 'password',         label: 'Password',         placeholder: '••••••••',       keyboard: 'default',       auto: 'password', secure: true },
                 { key: 'confirm_password', label: 'Confirm Password', placeholder: '••••••••',       keyboard: 'default',       auto: 'password', secure: true },
-                { key: 'referral_code',    label: 'Referral Code (Optional)', placeholder: 'e.g. A1B2C3D4', keyboard: 'default', auto: 'none', maxLength: 8 },
+                { key: 'referral_code',    label: referralLocked ? 'Referral Code 🔒' : 'Referral Code (Optional)', placeholder: 'e.g. A1B2C3D4', keyboard: 'default', auto: 'none', maxLength: 8, locked: referralLocked },
               ].map(f => (
                 <View key={f.key} style={styles.field}>
                   <Text style={styles.label}>{f.label}</Text>
                   <View style={styles.inputContainer}>
                     <TextInput
-                      style={[styles.input, f.secure && { paddingRight: 50 }]}
+                      style={[styles.input, f.secure && { paddingRight: 50 }, f.locked && styles.inputLocked]}
                       placeholder={f.placeholder}
                       placeholderTextColor={colors.white30}
                       value={form[f.key]}
@@ -104,6 +117,8 @@ export default function RegisterScreen({ navigation, route }) {
                       autoComplete={f.auto}
                       secureTextEntry={f.secure ? !showPassword : false}
                       maxLength={f.maxLength}
+                      editable={!f.locked}
+                      selectTextOnFocus={!f.locked}
                     />
                     {f.secure && (
                       <TouchableOpacity
@@ -115,6 +130,9 @@ export default function RegisterScreen({ navigation, route }) {
                       </TouchableOpacity>
                     )}
                   </View>
+                  {f.locked && (
+                    <Text style={styles.lockedHint}>Applied from your invite link</Text>
+                  )}
                 </View>
               ))}
 
@@ -156,8 +174,10 @@ const styles = StyleSheet.create({
     borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13,
     color: colors.light, fontSize: 15,
   },
+  inputLocked: { color: colors.teal, opacity: 0.85 },
   eyeIcon:    { position: 'absolute', right: 16, height: '100%', justifyContent: 'center' },
   hint:       { fontSize: 11, color: 'rgba(255,255,255,0.25)', marginTop: 4, lineHeight: 16 },
+  lockedHint: { fontSize: 11, color: colors.teal, marginTop: 6 },
   submitBtn:  { height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   submitText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   switchLink: { marginTop: 20, alignItems: 'center' },

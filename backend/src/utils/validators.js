@@ -32,7 +32,7 @@ const adminLoginSchema = z.object({
 });
 
 const createSessionSchema = z.object({
-  category_ids: z.array(z.string().uuid()).length(5, 'Exactly 5 categories required'),
+  category_ids: z.array(z.string().uuid()).length(7, 'Exactly 7 categories required'),
   stake_amount: z.number().positive(),
 });
 
@@ -66,6 +66,21 @@ const createQuestionSchema = z.object({
   correct_option: z.enum(['a','b','c','d']),
   difficulty:     z.enum(['easy','medium','hard']),
 });
+
+const updateQuestionSchema = z.object({
+  category_id:    z.string().uuid().optional(),
+  question_text:  z.string().min(10).optional(),
+  option_a:       z.string().min(1).optional(),
+  option_b:       z.string().min(1).optional(),
+  option_c:       z.string().min(1).optional(),
+  option_d:       z.string().min(1).optional(),
+  correct_option: z.enum(['a','b','c','d']).optional(),
+  difficulty:     z.enum(['easy','medium','hard']).optional(),
+  is_active:      z.boolean().optional(),
+}).refine(
+  (data) => Object.values(data).some(v => v !== undefined),
+  { message: 'At least one field is required' }
+);
 
 const createCategorySchema = z.object({
   name:        z.string().min(2).max(100),
@@ -119,6 +134,11 @@ const resolveAccountSchema = z.object({
   bank_code: z.string().min(3),
 });
 
+const correctGameAnswerSchema = z.object({
+  question_id: z.string().uuid(),
+  is_correct:  z.boolean(),
+});
+
 function validate(schema) {
   return (req, res, next) => {
     const result = schema.safeParse(req.body);
@@ -145,10 +165,12 @@ module.exports = {
   withdrawSchema,
   resolveAccountSchema,
   createQuestionSchema,
+  updateQuestionSchema,
   createCategorySchema,
   testimonialBodySchema,
   settingsSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
   updatePasswordSchema,
+  correctGameAnswerSchema,
 };

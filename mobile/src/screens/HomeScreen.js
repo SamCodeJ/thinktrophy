@@ -48,6 +48,7 @@ export default function HomeScreen({ navigation }) {
     React.useCallback(() => {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
       queryClient.invalidateQueries({ queryKey: ['history'] });
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
     }, [])
   );
 
@@ -109,7 +110,7 @@ export default function HomeScreen({ navigation }) {
                 <Text style={styles.playIcon}>🎮</Text>
                 <View>
                   <Text style={styles.playTitle}>Play Now</Text>
-                  <Text style={styles.playHint}>Select 5 categories · Stake · Win</Text>
+                  <Text style={styles.playHint}>Select 7 categories · Stake · Win</Text>
                 </View>
                 <Text style={styles.playArrow}>→</Text>
               </LinearGradient>

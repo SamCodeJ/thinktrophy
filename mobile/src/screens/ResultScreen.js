@@ -29,7 +29,7 @@ function ScoreCounter({ target, duration = 1200 }) {
 }
 
 export default function ResultScreen({ navigation, route }) {
-  const { sessionId, score: routeScore, payout: routePayout, stakeAmount, expired, kioskEnded } = route.params;
+  const { sessionId, score: routeScore, payout: routePayout, stakeAmount, expired, kioskEnded, taxAmount: routeTax, grossPayout: routeGross } = route.params;
   const fadeAnim   = useRef(new Animated.Value(0)).current;
   const trophyAnim = useRef(new Animated.Value(0)).current;
   const [showReview, setShowReview] = useState(false);
@@ -50,13 +50,17 @@ export default function ResultScreen({ navigation, route }) {
       queryClient.invalidateQueries({ queryKey: ['wallet'] });
       queryClient.invalidateQueries({ queryKey: ['history'] });
       queryClient.invalidateQueries({ queryKey: ['gameHistory'] });
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
     }
   }, [result]);
   const score        = result?.score    ?? routeScore    ?? 0;
   const payout       = result?.payout   ?? routePayout   ?? 0;
   const stake        = result?.stakeAmount ?? stakeAmount ?? 0;
+  const taxAmount    = result?.taxAmount ?? routeTax ?? 0;
+  const grossPayout  = result?.grossPayout ?? routeGross ?? (parseFloat(payout) + parseFloat(taxAmount));
   const questionReview = result?.questionReview || [];
   const won          = payout > 0;
+  const taxableWinnings = grossPayout > stake ? grossPayout - stake : grossPayout;
 
   useEffect(() => {
     Animated.sequence([
@@ -115,11 +119,17 @@ export default function ResultScreen({ navigation, route }) {
             <View style={[styles.payoutCard, { borderColor: won ? `${colors.green}40` : 'rgba(255,255,255,0.08)' }]}>
               {won ? (
                 <>
-                  <Text style={styles.payoutLabel}>You Won</Text>
+                  <Text style={styles.payoutLabel}>Credited to Wallet</Text>
                   <Text style={styles.payoutAmount}>{fmt(payout)}</Text>
-                  <Text style={styles.payoutSub}>
-                    {payout >= stake ? `+${fmt(payout - stake)} profit` : `-${fmt(stake - payout)} loss`} · Credited to wallet
-                  </Text>
+                  {taxAmount > 0 ? (
+                    <Text style={styles.payoutSub}>
+                      Winnings {fmt(taxableWinnings)} · Tax {fmt(taxAmount)}
+                    </Text>
+                  ) : (
+                    <Text style={styles.payoutSub}>
+                      {payout >= stake ? `+${fmt(payout - stake)} profit` : `-${fmt(stake - payout)} loss`} · Credited to wallet
+                    </Text>
+                  )}
                 </>
               ) : (
                 <>

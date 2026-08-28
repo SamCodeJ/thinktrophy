@@ -93,6 +93,10 @@ function getTodayDate() {
   return `${year}-${month}-${day}`;
 }
 
+function roundZohoAmount(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+}
+
 async function syncDeposit(userId, amount, transactionId) {
   const bankClearing = process.env.ZOHO_ACCOUNT_BANK_CLEARING;
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
@@ -151,30 +155,48 @@ async function syncStake(userId, amount, gameId) {
     });
 }
 
-async function syncPayout(userId, amount, gameId) {
+async function syncPayout(userId, amount, gameId, extras = {}) {
   const payoutsExpense = process.env.ZOHO_ACCOUNT_PAYOUTS_EXPENSE;
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
+  const taxAccount = process.env.ZOHO_ACCOUNT_TAX_PAYABLE || process.env.ZOHO_ACCOUNT_WIN_TAX_INCOME;
 
   if (!payoutsExpense || !walletLiability) return;
 
+  const gross = roundZohoAmount(amount);
+  const taxAmount = roundZohoAmount(extras.taxAmount || 0);
+  const netAmount = extras.netAmount != null
+    ? roundZohoAmount(extras.netAmount)
+    : roundZohoAmount(gross - taxAmount);
+
   const lineItems = [
-    { account_id: payoutsExpense, debit_or_credit: 'debit', amount },
-    { account_id: walletLiability, debit_or_credit: 'credit', amount },
+    { account_id: payoutsExpense, debit_or_credit: 'debit', amount: gross },
   ];
 
-    return createJournalEntry(
-      getTodayDate(),
-      `PAY-${gameId}`,
-      `Game Payout - User ${userId}`,
-      lineItems
-    ).then(res => {
-      const journalId = res.journal?.journal_id;
-      if (journalId) {
-        return axios.post(`${process.env.ZOHO_API_DOMAIN}/books/v3/journals/${journalId}/status/published`, null, {
-          params: { organization_id: process.env.ZOHO_ORG_ID },
-          headers: { Authorization: `Zoho-oauthtoken ${tokenCache.token}` }        }).catch(e => console.error('Failed to publish payout journal:', e.message));
-      }
-    });
+  if (taxAmount > 0 && taxAccount) {
+    // Withhold tax from winnings: player wallet gets net, tax authority liability gets the 5%.
+    lineItems.push({ account_id: walletLiability, debit_or_credit: 'credit', amount: netAmount });
+    lineItems.push({ account_id: taxAccount, debit_or_credit: 'credit', amount: taxAmount });
+  } else {
+    lineItems.push({ account_id: walletLiability, debit_or_credit: 'credit', amount: gross });
+  }
+
+  const scoreLabel = extras.score != null ? `${extras.score}/10` : 'game';
+  const winningsLabel = extras.taxableWinnings != null ? ` winnings ₦${roundZohoAmount(extras.taxableWinnings).toFixed(2)}` : '';
+  const taxLabel = taxAmount > 0 ? `, tax ₦${taxAmount.toFixed(2)} withheld (stake not taxed), net ₦${netAmount.toFixed(2)}` : '';
+
+  return createJournalEntry(
+    getTodayDate(),
+    `PAY-${gameId}`,
+    `Game payout ${scoreLabel} - User ${userId} - gross ₦${gross.toFixed(2)}${winningsLabel}${taxLabel}`,
+    lineItems
+  ).then(res => {
+    const journalId = res.journal?.journal_id;
+    if (journalId) {
+      return axios.post(`${process.env.ZOHO_API_DOMAIN}/books/v3/journals/${journalId}/status/published`, null, {
+        params: { organization_id: process.env.ZOHO_ORG_ID },
+        headers: { Authorization: `Zoho-oauthtoken ${tokenCache.token}` }        }).catch(e => console.error('Failed to publish payout journal:', e.message));
+    }
+  });
 }
 
 async function syncReferralBonus(userId, amount, referralId) {
@@ -203,30 +225,38 @@ async function syncReferralBonus(userId, amount, referralId) {
     });
 }
 
-async function syncWinTax(userId, amount, gameId) {
+async function syncWinTax(userId, amount, gameId, extras = {}) {
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
-  const winTaxIncome = process.env.ZOHO_ACCOUNT_WIN_TAX_INCOME;
+  const taxAccount = process.env.ZOHO_ACCOUNT_TAX_PAYABLE || process.env.ZOHO_ACCOUNT_WIN_TAX_INCOME;
 
-  if (!walletLiability || !winTaxIncome) return;
+  if (!walletLiability || !taxAccount) return;
+
+  const taxAmount = roundZohoAmount(amount);
+  if (!(taxAmount > 0)) return;
 
   const lineItems = [
-    { account_id: walletLiability, debit_or_credit: 'debit', amount },
-    { account_id: winTaxIncome, debit_or_credit: 'credit', amount },
+    { account_id: walletLiability, debit_or_credit: 'debit', amount: taxAmount },
+    { account_id: taxAccount, debit_or_credit: 'credit', amount: taxAmount },
   ];
 
-    return createJournalEntry(
-      getTodayDate(),
-      `TAX-${gameId}`,
-      `Win Tax Deduction - User ${userId}`,
-      lineItems
-    ).then(res => {
-      const journalId = res.journal?.journal_id;
-      if (journalId) {
-        return axios.post(`${process.env.ZOHO_API_DOMAIN}/books/v3/journals/${journalId}/status/published`, null, {
-          params: { organization_id: process.env.ZOHO_ORG_ID },
-          headers: { Authorization: `Zoho-oauthtoken ${tokenCache.token}` }        }).catch(e => console.error('Failed to publish tax journal:', e.message));
-      }
-    });
+  const winningsNote = extras.taxableWinnings != null
+    ? ` on ₦${roundZohoAmount(extras.taxableWinnings).toFixed(2)} winnings`
+    : '';
+  const scoreNote = extras.score != null ? ` (${extras.score}/10)` : '';
+
+  return createJournalEntry(
+    getTodayDate(),
+    `TAX-${gameId}`,
+    `Win tax withheld${scoreNote}${winningsNote} - User ${userId} (stake not taxed)`,
+    lineItems
+  ).then(res => {
+    const journalId = res.journal?.journal_id;
+    if (journalId) {
+      return axios.post(`${process.env.ZOHO_API_DOMAIN}/books/v3/journals/${journalId}/status/published`, null, {
+        params: { organization_id: process.env.ZOHO_ORG_ID },
+        headers: { Authorization: `Zoho-oauthtoken ${tokenCache.token}` }        }).catch(e => console.error('Failed to publish tax journal:', e.message));
+    }
+  });
 }
 
 async function syncWithdrawalRequest(userId, totalAmount, feeAmount, transactionId) {
@@ -326,6 +356,73 @@ async function syncWithdrawalFailed(userId, totalAmount, feeAmount, transactionI
   });
 }
 
+/**
+ * Dispute grade correction: journal only the payout/tax/wallet deltas.
+ * Positive grossDelta = additional prize expense; negative = reverse prior prize.
+ */
+async function syncPayoutCorrection(userId, {
+  gameId,
+  grossDelta = 0,
+  taxDelta = 0,
+  netDelta = 0,
+  score,
+  stake,
+  taxableWinnings,
+} = {}) {
+  const payoutsExpense = process.env.ZOHO_ACCOUNT_PAYOUTS_EXPENSE;
+  const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
+  const taxAccount = process.env.ZOHO_ACCOUNT_TAX_PAYABLE || process.env.ZOHO_ACCOUNT_WIN_TAX_INCOME;
+
+  if (!payoutsExpense || !walletLiability) return;
+
+  const gross = roundZohoAmount(grossDelta);
+  const tax = roundZohoAmount(taxDelta);
+  const net = roundZohoAmount(netDelta);
+  if (gross === 0 && tax === 0 && net === 0) return;
+
+  const lineItems = [];
+
+  if (gross > 0) {
+    lineItems.push({ account_id: payoutsExpense, debit_or_credit: 'debit', amount: gross });
+  } else if (gross < 0) {
+    lineItems.push({ account_id: payoutsExpense, debit_or_credit: 'credit', amount: Math.abs(gross) });
+  }
+
+  if (net > 0) {
+    lineItems.push({ account_id: walletLiability, debit_or_credit: 'credit', amount: net });
+  } else if (net < 0) {
+    lineItems.push({ account_id: walletLiability, debit_or_credit: 'debit', amount: Math.abs(net) });
+  }
+
+  if (tax > 0 && taxAccount) {
+    lineItems.push({ account_id: taxAccount, debit_or_credit: 'credit', amount: tax });
+  } else if (tax < 0 && taxAccount) {
+    lineItems.push({ account_id: taxAccount, debit_or_credit: 'debit', amount: Math.abs(tax) });
+  }
+
+  if (!lineItems.length) return;
+
+  const scoreLabel = score != null ? `${score}/10` : 'corrected';
+  const ref = `PAY-CORR-${gameId}-${Date.now()}`;
+  const stakeNote = stake != null ? ` stake ₦${roundZohoAmount(stake).toFixed(2)}` : '';
+  const winNote = taxableWinnings != null ? ` taxable ₦${roundZohoAmount(taxableWinnings).toFixed(2)}` : '';
+
+  return createJournalEntry(
+    getTodayDate(),
+    ref,
+    `Dispute payout correction ${scoreLabel} - User ${userId}${stakeNote}${winNote} - gross Δ ₦${gross.toFixed(2)}, tax Δ ₦${tax.toFixed(2)}, net Δ ₦${net.toFixed(2)}`,
+    lineItems
+  ).then(res => {
+    const journalId = res.journal?.journal_id;
+    if (journalId) {
+      return axios.post(`${process.env.ZOHO_API_DOMAIN}/books/v3/journals/${journalId}/status/published`, null, {
+        params: { organization_id: process.env.ZOHO_ORG_ID },
+        headers: { Authorization: `Zoho-oauthtoken ${tokenCache.token}` },
+      }).catch(e => console.error('Failed to publish payout correction journal:', e.message));
+    }
+  });
+}
+
 async function syncRefund(userId, amount, gameId) {
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
   const refundsPayable = process.env.ZOHO_ACCOUNT_REFUNDS_PAYABLE;
@@ -384,6 +481,7 @@ module.exports = {
   syncDeposit,
   syncStake,
   syncPayout,
+  syncPayoutCorrection,
   syncReferralBonus,
   syncWinTax,
   syncWithdrawalRequest,

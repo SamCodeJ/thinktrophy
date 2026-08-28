@@ -71,8 +71,8 @@ const steps = [
   },
   {
     step: '03',
-    title: 'Pick a Category & Play',
-    desc: 'Choose your topic, stake your amount, and answer 10 questions in 60 seconds as fast and accurately as you can.',
+    title: 'Pick 7 Categories & Play',
+    desc: 'Choose 7 topics, stake your amount, and answer 10 questions in 60 seconds as fast and accurately as you can.',
     cta: null,
   },
   {

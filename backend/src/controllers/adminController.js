@@ -220,12 +220,25 @@ async function getStatistics(req, res, next) {
 async function listQuestions(req, res, next) {
   try {
     const { category_id, difficulty, status, page = 1, limit = 50 } = req.query;
+    const search = String(req.query.search || '').trim();
     const conditions = [];
     const params     = [];
 
     if (category_id) { params.push(category_id); conditions.push(`q.category_id = $${params.length}`); }
     if (difficulty)  { params.push(difficulty);   conditions.push(`q.difficulty = $${params.length}`); }
     if (status)      { params.push(status === 'active'); conditions.push(`q.is_active = $${params.length}`); }
+    if (search) {
+      params.push(`%${search}%`);
+      const i = params.length;
+      conditions.push(
+        `(q.question_text ILIKE $${i}
+          OR q.option_a ILIKE $${i}
+          OR q.option_b ILIKE $${i}
+          OR q.option_c ILIKE $${i}
+          OR q.option_d ILIKE $${i}
+          OR c.name ILIKE $${i})`
+      );
+    }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -242,7 +255,10 @@ async function listQuestions(req, res, next) {
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
-    const countRes = await query(`SELECT COUNT(*) FROM questions q ${where}`, params.slice(0, -2));
+    const countRes = await query(
+      `SELECT COUNT(*) FROM questions q JOIN categories c ON c.id = q.category_id ${where}`,
+      params.slice(0, -2)
+    );
     res.json({ success: true, data: result.rows, total: parseInt(countRes.rows[0].count) });
   } catch (err) { next(err); }
 }
@@ -273,28 +289,42 @@ async function createQuestion(req, res, next) {
 async function updateQuestion(req, res, next) {
   try {
     const { id } = req.params;
-    const { question_text, option_a, option_b, option_c, option_d, correct_option, difficulty, is_active } = req.body;
+    const {
+      category_id, question_text, option_a, option_b, option_c, option_d,
+      correct_option, difficulty, is_active,
+    } = req.body;
+
     const result = await query(
       `UPDATE questions SET
-         question_text  = COALESCE($1, question_text),
-         option_a       = COALESCE($2, option_a),
-         option_b       = COALESCE($3, option_b),
-         option_c       = COALESCE($4, option_c),
-         option_d       = COALESCE($5, option_d),
-         correct_option = COALESCE($6, correct_option),
-         difficulty     = COALESCE($7, difficulty),
-         is_active      = COALESCE($8, is_active)
-       WHERE id = $9 RETURNING *`,
-      [question_text, option_a, option_b, option_c, option_d, correct_option, difficulty, is_active, id]
+         category_id    = COALESCE($1, category_id),
+         question_text  = COALESCE($2, question_text),
+         option_a       = COALESCE($3, option_a),
+         option_b       = COALESCE($4, option_b),
+         option_c       = COALESCE($5, option_c),
+         option_d       = COALESCE($6, option_d),
+         correct_option = COALESCE($7, correct_option),
+         difficulty     = COALESCE($8, difficulty),
+         is_active      = COALESCE($9, is_active)
+       WHERE id = $10 RETURNING *`,
+      [
+        category_id ?? null, question_text ?? null, option_a ?? null, option_b ?? null,
+        option_c ?? null, option_d ?? null, correct_option ?? null, difficulty ?? null,
+        typeof is_active === 'boolean' ? is_active : null, id,
+      ]
     );
     if (!result.rows[0]) throw new AppError('Question not found', 404, 'NOT_FOUND');
-    
+    cache.del('active_categories');
+
     await logAdminAction({
       adminId: req.admin.adminId,
       action: 'UPDATE_QUESTION',
       entity: 'question',
       entityId: id,
-      details: { is_active },
+      details: {
+        category_id: category_id || undefined,
+        difficulty: difficulty || undefined,
+        is_active: typeof is_active === 'boolean' ? is_active : undefined,
+      },
       ipAddress: req.ip
     });
 
@@ -709,7 +739,70 @@ async function getGameSessionDetail(req, res, next) {
       [id]
     );
     if (!result.rows[0]) throw new AppError('Session not found', 404, 'NOT_FOUND');
-    res.json({ success: true, data: result.rows[0] });
+    const session = result.rows[0];
+    const answers = Array.isArray(session.answers_submitted) ? session.answers_submitted : [];
+    const questionIds = [...new Set(answers.map(a => a.question_id).filter(Boolean))];
+
+    let questionsById = {};
+    if (questionIds.length) {
+      const qRes = await query(
+        `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_option, category_id
+         FROM questions WHERE id = ANY($1::uuid[])`,
+        [questionIds]
+      );
+      questionsById = Object.fromEntries(qRes.rows.map(q => [q.id, q]));
+    }
+
+    const gross = parseFloat(session.payout_amount) || 0;
+    const tax = parseFloat(session.tax_amount) || 0;
+    session.net_payout = Math.round((gross - tax) * 100) / 100;
+    session.answer_review = answers.map((a, i) => {
+      const q = questionsById[a.question_id] || {};
+      return {
+        index: i + 1,
+        question_id: a.question_id,
+        question_text: q.question_text || null,
+        chosen_option: a.chosen_option,
+        correct_option: q.correct_option || null,
+        is_correct: Boolean(a.is_correct),
+        submitted_at: a.submitted_at || null,
+        corrected_at: a.corrected_at || null,
+        previous_is_correct: a.previous_is_correct,
+        options: q.question_text ? {
+          a: q.option_a, b: q.option_b, c: q.option_c, d: q.option_d,
+        } : null,
+      };
+    });
+
+    res.json({ success: true, data: session });
+  } catch (err) { next(err); }
+}
+
+async function correctGameSessionAnswer(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { question_id, is_correct } = req.body;
+    const { correctSessionGrade } = require('../services/gameService');
+    const result = await correctSessionGrade(id, question_id, is_correct);
+
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'CORRECT_GAME_ANSWER',
+      entity: 'game_session',
+      entityId: id,
+      details: {
+        question_id,
+        is_correct,
+        score_before: result.previous.score,
+        score_after: result.corrected.score,
+        wallet_credit_delta: result.walletCreditDelta,
+        net_before: result.previous.netPayout,
+        net_after: result.corrected.netPayout,
+      },
+      ipAddress: req.ip,
+    });
+
+    res.json({ success: true, data: result });
   } catch (err) { next(err); }
 }
 
@@ -812,7 +905,10 @@ async function deleteTestimonial(req, res, next) {
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
-const PUBLIC_SETTING_KEYS = ['kiosk_mode', 'kiosk_warning_count', 'platform_name', 'platform_tagline'];
+const PUBLIC_SETTING_KEYS = [
+  'kiosk_mode', 'kiosk_warning_count', 'platform_name', 'platform_tagline',
+  'user_win_tax_percentage', 'payout_perfect', 'payout_nine',
+];
 
 async function getPublicSettings(req, res, next) {
   try {
@@ -979,7 +1075,7 @@ module.exports = {
   listQuestions, createQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions, bulkDeleteQuestions,
   listAdminCategories, createCategory, updateCategory, deleteCategory, bulkDeleteCategories,
   listTransactions, listUsers, getUserDetail, updateUserStatus,
-  listGameSessions, getGameSessionDetail,
+  listGameSessions, getGameSessionDetail, correctGameSessionAnswer,
   getPublicTestimonials, listTestimonials, createTestimonial, updateTestimonial, deleteTestimonial,
   getSettings, updateSettings, getPublicSettings,
   getAdminLogs, listAdmins, createAdmin, updateAdminRole,

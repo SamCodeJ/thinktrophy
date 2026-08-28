@@ -2,7 +2,11 @@ const router = require('express').Router();
 const multer = require('multer');
 const ctrl   = require('../controllers/adminController');
 const { requireAdmin, requireModeratorOrAbove, requireSuperAdmin } = require('../middleware/auth');
-const { validate, createQuestionSchema, createCategorySchema, testimonialBodySchema, settingsSchema } = require('../utils/validators');
+const {
+  validate, createQuestionSchema, updateQuestionSchema,
+  createCategorySchema, testimonialBodySchema, settingsSchema,
+  correctGameAnswerSchema,
+} = require('../utils/validators');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -17,7 +21,7 @@ router.get('/statistics',               ctrl.getStatistics);
 // Questions
 router.get('/questions',                ctrl.listQuestions);
 router.post('/questions',               requireModeratorOrAbove, validate(createQuestionSchema), ctrl.createQuestion);
-router.put('/questions/:id',            requireModeratorOrAbove, ctrl.updateQuestion);
+router.put('/questions/:id',            requireModeratorOrAbove, validate(updateQuestionSchema), ctrl.updateQuestion);
 router.delete('/questions/:id',         requireModeratorOrAbove, ctrl.deleteQuestion);
 router.post('/questions/bulk-delete',   requireModeratorOrAbove, ctrl.bulkDeleteQuestions);
 router.post('/questions/bulk-upload',   requireModeratorOrAbove, upload.single('file'), ctrl.bulkUploadQuestions);
@@ -46,6 +50,12 @@ router.put('/users/:id/status',         requireModeratorOrAbove, ctrl.updateUser
 // Game Sessions
 router.get('/game-sessions',            ctrl.listGameSessions);
 router.get('/game-sessions/:id',        ctrl.getGameSessionDetail);
+router.post(
+  '/game-sessions/:id/correct-answer',
+  requireModeratorOrAbove,
+  validate(correctGameAnswerSchema),
+  ctrl.correctGameSessionAnswer
+);
 
 // Settings
 router.get('/settings',                 ctrl.getSettings);

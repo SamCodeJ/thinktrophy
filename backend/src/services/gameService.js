@@ -1,5 +1,5 @@
 const { query, getClient } = require('../db/connection');
-const { buildSessionQuestions, formatQuestionForClient, getQuestionById } = require('./questionService');
+const { buildSessionQuestions, formatQuestionForClient, getQuestionById, getCategoriesForUser, markQuestionsSeen } = require('./questionService');
 const { signSessionToken, verifySessionToken } = require('../utils/jwt');
 const { AppError } = require('../middleware/errorHandler');
 const { sendActionEmail } = require('../utils/emailService');
@@ -63,8 +63,23 @@ async function createSession(userId, categoryIds, stakeAmount) {
     if (parseFloat(wallet.rows[0].wallet_balance) < stakeAmount)
       throw new AppError('Insufficient wallet balance', 400, 'INSUFFICIENT_BALANCE');
 
-    // Build questions
-    const { trackA, trackB, answerMaps } = await buildSessionQuestions(categoryIds);
+    const availability = await getCategoriesForUser(userId);
+    const byId = new Map(availability.map(c => [c.id, c]));
+    for (const id of categoryIds) {
+      const cat = byId.get(id);
+      if (!cat || cat.exhausted) {
+        throw new AppError(
+          cat
+            ? `"${cat.name}" has no remaining questions. Please pick another category.`
+            : 'Invalid category selected.',
+          400,
+          'CATEGORY_EXHAUSTED'
+        );
+      }
+    }
+
+    // Build questions — skip any this user has already seen
+    const { trackA, trackB, answerMaps } = await buildSessionQuestions(categoryIds, userId);
 
     // Deduct stake
     await client.query(
@@ -123,6 +138,7 @@ async function createSession(userId, categoryIds, stakeAmount) {
 
     // Return first question
     const firstQuestionId = trackB[0]; // default to track B; track isn't determined yet
+    await markQuestionsSeen(userId, [firstQuestionId]);
     const firstQuestion = await getQuestionById(firstQuestionId);
     const firstMap = answerMaps.find(m => m.questionId === firstQuestionId);
 
@@ -195,6 +211,7 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
     const track = determineTrack(session, idx);
     const questionIds = track === 'a' ? session.question_ids_track_a : session.question_ids_track_b;
     const questionId = questionIds[idx];
+    await markQuestionsSeen(userId, [questionId]);
 
     const answerMaps = session.answer_option_maps;
     const answerMap  = answerMaps.find(m => m.questionId === questionId);
@@ -233,37 +250,31 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
       // Game complete
       const settings = await getPlatformSettings();
       const payout = computePayout(newScore, session.stake_amount, settings);
+      const stake = parseFloat(session.stake_amount);
+      const taxableWinnings = computeTaxableWinnings(payout, stake);
+      const taxAmount = computeWinTax(taxableWinnings, settings.userWinTaxPercentage);
+      const netPayout = roundMoney(payout - taxAmount);
 
       await client.query(
         `UPDATE game_sessions
          SET current_question_index = $1, score = $2, status = 'completed',
-             answers_submitted = $3, payout_amount = $4, completed_at = NOW(),
-             active_track = $5
-         WHERE id = $6`,
-        [newIdx, newScore, JSON.stringify(answersSubmitted), payout, newActiveTrack, sessionId]
+             answers_submitted = $3, payout_amount = $4, tax_amount = $5, completed_at = NOW(),
+             active_track = $6
+         WHERE id = $7`,
+        [newIdx, newScore, JSON.stringify(answersSubmitted), payout, taxAmount, newActiveTrack, sessionId]
       );
 
       let userEmail = null;
       let userName = null;
       
-      // Credit payout
       if (payout > 0) {
-        // Calculate Profit and Tax
-        const stake = parseFloat(session.stake_amount);
-        const profit = payout - stake;
-        let taxAmount = 0;
-        
-        if (profit > 0 && settings.userWinTaxPercentage > 0) {
-          taxAmount = profit * settings.userWinTaxPercentage;
-        }
-        
-        const netPayout = payout - taxAmount;
+        const profit = roundMoney(payout - stake);
 
         // Check if this is the user's first win before updating their total_won
         const preCheck = await client.query('SELECT total_won FROM users WHERE id = $1', [userId]);
         const isFirstWin = parseFloat(preCheck.rows[0].total_won) === 0;
 
-        // Update wallet balance with the NET payout, but track total_won as the GROSS payout
+        // Credit the NET payout (gross prize minus tax). Stake is not taxed.
         const uRes = await client.query(
           'UPDATE users SET wallet_balance = wallet_balance + $1, total_won = total_won + $2 WHERE id = $3 RETURNING username, email, referred_by',
           [netPayout, payout, userId]
@@ -280,7 +291,13 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
         );
         
         const zohoService = require('./zohoService');
-        zohoService.syncPayout(userId, payout, sessionId)
+        zohoService.syncPayout(userId, payout, sessionId, {
+          taxAmount,
+          netAmount: netPayout,
+          score: newScore,
+          taxableWinnings,
+          stake,
+        })
           .catch(err => console.error('Failed to sync payout to Zoho Books:', err));
 
         // Log the tax deduction transaction if applicable
@@ -288,11 +305,12 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
           await client.query(
             `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
              VALUES ($1, 'tax_deduction', $2, 'verified', $3, $4)`,
-            [userId, taxAmount, sessionId, JSON.stringify({ tax_rate: settings.userWinTaxPercentage, profit_amount: profit })]
+            [userId, taxAmount, sessionId, JSON.stringify({
+              tax_rate: settings.userWinTaxPercentage,
+              taxable_winnings: taxableWinnings,
+              profit_amount: profit,
+            })]
           );
-          
-          zohoService.syncWinTax(userId, taxAmount, sessionId)
-            .catch(err => console.error('Failed to sync win tax to Zoho Books:', err));
         }
 
         // Handle referral bonus (only on the referred user's first win)
@@ -339,7 +357,7 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
           userEmail,
           userName,
           'You Won on ThinkTrophy!',
-          `Congratulations! You scored ${newScore}/10 and won ₦${parseFloat(payout).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. The amount has been credited to your wallet.`
+          `Congratulations! You scored ${newScore}/10 and won ₦${parseFloat(netPayout).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} after tax. The amount has been credited to your wallet.`
         ).catch(err => console.error('Failed to send winning email:', err));
       }
 
@@ -347,8 +365,11 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
         gameComplete: true,
         score:        newScore,
         totalQuestions: 10,
-        payout,
-        stakeAmount:  parseFloat(session.stake_amount),
+        payout:       netPayout,
+        grossPayout:  payout,
+        taxAmount,
+        taxableWinnings,
+        stakeAmount:  stake,
         answersSubmitted,
         isCorrect,
         correctOption: question.correct_option,
@@ -370,6 +391,7 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
     const nextTrack       = determineTrack({ ...session, active_track: newActiveTrack, current_question_index: newIdx }, newIdx);
     const nextQuestionIds = nextTrack === 'a' ? session.question_ids_track_a : session.question_ids_track_b;
     const nextQuestionId  = nextQuestionIds[newIdx];
+    await markQuestionsSeen(userId, [nextQuestionId]);
     const nextQuestion    = await getQuestionById(nextQuestionId);
     const nextMap         = answerMaps.find(m => m.questionId === nextQuestionId);
 
@@ -396,14 +418,43 @@ function determineTrack(session, idx) {
   return 'b'; // default before Q5 is answered
 }
 
+function roundMoney(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+}
+
 function computePayout(score, stakeAmount, settings) {
   const stake = parseFloat(stakeAmount);
-  if (score === 10) return stake * settings.payoutPerfect;
-  if (score === 9)  return stake * settings.payoutNine;
+  if (score === 10) return roundMoney(stake * settings.payoutPerfect);
+  if (score === 9)  return roundMoney(stake * settings.payoutNine);
   return 0;
 }
 
+// 10/10: tax the profit only (payout − stake). 9/10: tax the prize payout.
+// The original stake is never included in the tax base when it is returned.
+function computeTaxableWinnings(payout, stake) {
+  if (!(payout > 0)) return 0;
+  if (payout > stake) return roundMoney(payout - stake);
+  return roundMoney(payout);
+}
+
+function computeWinTax(taxableWinnings, taxRate) {
+  if (!(taxableWinnings > 0) || !(taxRate > 0)) return 0;
+  return roundMoney(taxableWinnings * taxRate);
+}
+
 async function expireSession(sessionId) {
+  const sess = await query(
+    `SELECT user_id, current_question_index, active_track,
+            question_ids_track_a, question_ids_track_b
+     FROM game_sessions WHERE id = $1 AND status = 'active'`,
+    [sessionId]
+  );
+  const session = sess.rows[0];
+  if (session) {
+    const track = session.active_track === 'a' ? session.question_ids_track_a : session.question_ids_track_b;
+    const shownCount = Math.max((session.current_question_index || 0) + 1, 1);
+    await markQuestionsSeen(session.user_id, (track || []).slice(0, shownCount));
+  }
   await query(
     `UPDATE game_sessions SET status = 'expired', completed_at = NOW() WHERE id = $1 AND status = 'active'`,
     [sessionId]
@@ -424,9 +475,191 @@ async function getSessionResult(sessionId, userId) {
   return session;
 }
 
+/**
+ * Admin dispute correction: flip one answer's grade, recompute score/payout/tax,
+ * and credit (or claw back) the wallet difference. Zoho is synced for any delta.
+ */
+async function correctSessionGrade(sessionId, questionId, isCorrect) {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    const sessRes = await client.query(
+      `SELECT * FROM game_sessions WHERE id = $1 FOR UPDATE`,
+      [sessionId]
+    );
+    const session = sessRes.rows[0];
+    if (!session) throw new AppError('Session not found', 404, 'NOT_FOUND');
+    if (session.status !== 'completed') {
+      throw new AppError('Only completed sessions can be grade-corrected', 400, 'INVALID_STATUS');
+    }
+
+    const answers = Array.isArray(session.answers_submitted)
+      ? [...session.answers_submitted]
+      : [];
+    const idx = answers.findIndex(a => a.question_id === questionId);
+    if (idx < 0) throw new AppError('That question was not answered in this session', 404, 'NOT_FOUND');
+
+    const prev = answers[idx];
+    if (Boolean(prev.is_correct) === Boolean(isCorrect)) {
+      throw new AppError('Answer grade is already set to that value', 400, 'NO_CHANGE');
+    }
+
+    const stake = parseFloat(session.stake_amount);
+    const oldScore = parseInt(session.score, 10) || 0;
+    const oldGross = parseFloat(session.payout_amount) || 0;
+    const oldTax = parseFloat(session.tax_amount) || 0;
+    const oldNet = roundMoney(oldGross - oldTax);
+
+    answers[idx] = {
+      ...prev,
+      is_correct: Boolean(isCorrect),
+      previous_is_correct: Boolean(prev.is_correct),
+      corrected_at: new Date().toISOString(),
+    };
+
+    const newScore = answers.filter(a => a.is_correct).length;
+    const settings = await getPlatformSettings();
+    const newGross = computePayout(newScore, stake, settings);
+    const taxableWinnings = computeTaxableWinnings(newGross, stake);
+    const newTax = computeWinTax(taxableWinnings, settings.userWinTaxPercentage);
+    const newNet = roundMoney(newGross - newTax);
+
+    const deltaGross = roundMoney(newGross - oldGross);
+    const deltaTax = roundMoney(newTax - oldTax);
+    const deltaNet = roundMoney(newNet - oldNet);
+
+    await client.query(
+      `UPDATE game_sessions
+       SET answers_submitted = $1, score = $2, payout_amount = $3, tax_amount = $4
+       WHERE id = $5`,
+      [JSON.stringify(answers), newScore, newGross, newTax, sessionId]
+    );
+
+    await client.query(
+      `UPDATE questions
+       SET times_answered_correctly = GREATEST(0, times_answered_correctly + $1)
+       WHERE id = $2`,
+      [isCorrect ? 1 : -1, questionId]
+    );
+
+    if (deltaNet !== 0 || deltaGross !== 0) {
+      // Guard clawback against insufficient wallet balance
+      if (deltaNet < 0) {
+        const balRes = await client.query(
+          'SELECT wallet_balance FROM users WHERE id = $1 FOR UPDATE',
+          [session.user_id]
+        );
+        const balance = parseFloat(balRes.rows[0]?.wallet_balance || 0);
+        if (balance + deltaNet < -0.001) {
+          throw new AppError(
+            `Cannot reverse ₦${Math.abs(deltaNet).toFixed(2)} — player wallet balance is only ₦${balance.toFixed(2)}`,
+            400,
+            'INSUFFICIENT_BALANCE'
+          );
+        }
+      }
+
+      await client.query(
+        'UPDATE users SET wallet_balance = wallet_balance + $1, total_won = GREATEST(0, total_won + $2) WHERE id = $3',
+        [deltaNet, deltaGross, session.user_id]
+      );
+
+      if (deltaGross !== 0) {
+        await client.query(
+          `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
+           VALUES ($1, 'payout', $2, 'verified', $3, $4)`,
+          [
+            session.user_id,
+            Math.abs(deltaGross),
+            sessionId,
+            JSON.stringify({
+              dispute_correction: true,
+              wallet_effect: deltaGross >= 0 ? 'credit' : 'debit',
+              score_before: oldScore,
+              score_after: newScore,
+              question_id: questionId,
+              gross_delta: deltaGross,
+              net_delta: deltaNet,
+            }),
+          ]
+        );
+      }
+
+      if (deltaTax !== 0) {
+        await client.query(
+          `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
+           VALUES ($1, 'tax_deduction', $2, 'verified', $3, $4)`,
+          [
+            session.user_id,
+            Math.abs(deltaTax),
+            sessionId,
+            JSON.stringify({
+              dispute_correction: true,
+              wallet_effect: deltaTax >= 0 ? 'debit' : 'credit',
+              tax_rate: settings.userWinTaxPercentage,
+              taxable_winnings: taxableWinnings,
+              score_before: oldScore,
+              score_after: newScore,
+              tax_delta: deltaTax,
+            }),
+          ]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
+    if (deltaGross !== 0 || deltaTax !== 0) {
+      const zohoService = require('./zohoService');
+      zohoService.syncPayoutCorrection(session.user_id, {
+        gameId: sessionId,
+        grossDelta: deltaGross,
+        taxDelta: deltaTax,
+        netDelta: deltaNet,
+        score: newScore,
+        stake,
+        taxableWinnings,
+      }).catch(err => console.error('Failed to sync dispute correction to Zoho Books:', err));
+    }
+
+    return {
+      sessionId,
+      questionId,
+      previous: {
+        score: oldScore,
+        is_correct: Boolean(prev.is_correct),
+        grossPayout: oldGross,
+        taxAmount: oldTax,
+        netPayout: oldNet,
+      },
+      corrected: {
+        score: newScore,
+        is_correct: Boolean(isCorrect),
+        grossPayout: newGross,
+        taxAmount: newTax,
+        netPayout: newNet,
+      },
+      walletCreditDelta: deltaNet,
+      answers,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   createSession,
   submitAnswer,
   getSessionResult,
   expireSession,
+  correctSessionGrade,
+  getPlatformSettings,
+  computePayout,
+  computeTaxableWinnings,
+  computeWinTax,
+  roundMoney,
 };

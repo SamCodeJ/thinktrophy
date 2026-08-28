@@ -25,6 +25,7 @@
         "backgroundColor": "#151D23"
       },
       "package": "com.thinktrophy.app",
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT"

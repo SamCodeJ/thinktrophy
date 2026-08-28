@@ -20,6 +20,29 @@ async function getProfile(req, res, next) {
       user.referral_code = newReferralCode;
     }
 
+    // Lifetime game stats (history API is capped at 20 rows — do not derive these client-side)
+    const statsRes = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'completed')::int AS games_completed,
+         COUNT(*) FILTER (
+           WHERE status = 'completed' AND COALESCE(payout_amount, 0) > 0
+         )::int AS games_won,
+         COALESCE(MAX(score) FILTER (WHERE status = 'completed'), 0)::int AS best_score
+       FROM game_sessions
+       WHERE user_id = $1`,
+      [req.user.userId]
+    );
+    const stats = statsRes.rows[0] || {};
+    const gamesCompleted = stats.games_completed || 0;
+    const gamesWon = stats.games_won || 0;
+    const totalGames = user.total_games_played || 0;
+    // Denominator matches the "Total Games" counter shown on profile
+    const winDenom = totalGames > 0 ? totalGames : gamesCompleted;
+
+    user.games_won = gamesWon;
+    user.best_score = stats.best_score || 0;
+    user.win_rate = winDenom > 0 ? Math.round((gamesWon / winDenom) * 100) : 0;
+
     res.json({ success: true, data: user });
   } catch (err) { next(err); }
 }
@@ -31,7 +54,7 @@ async function getWallet(req, res, next) {
       [req.user.userId]
     );
     const txRes = await query(
-      `SELECT id, type, amount, status, reference, game_session_id, created_at
+      `SELECT id, type, amount, status, reference, game_session_id, metadata, created_at
        FROM transactions WHERE user_id = $1
        ORDER BY created_at DESC LIMIT 50`,
       [req.user.userId]
@@ -50,7 +73,7 @@ async function getGameHistory(req, res, next) {
   try {
     const result = await query(
       `SELECT gs.id, gs.stake_amount, gs.score, gs.payout_amount, gs.status,
-              gs.started_at, gs.completed_at,
+              gs.started_at, gs.completed_at, gs.selected_category_ids,
               EXTRACT(EPOCH FROM (gs.completed_at - gs.started_at))::int AS duration_seconds
        FROM game_sessions gs
        WHERE gs.user_id = $1
