@@ -144,7 +144,7 @@ export default function WalletScreen() {
       try {
         const link = await FlutterwaveInit({
           tx_ref: ref,
-          authorization: 'FLWPUBK_TEST-e35abe483f6a314d5769d6689cefbca6-X',
+          authorization: 'FLWPUBK-73d87d50b8b62e775d871ffa0c8e5d0b-X',
           customer: {
             email: userEmail,
             name: userName
