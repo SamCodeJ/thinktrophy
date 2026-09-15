@@ -287,27 +287,35 @@ export default function Categories() {
 
   const createMut = useMutation({
     mutationFn: createCategory,
-    onSuccess: () => { qc.invalidateQueries(['admin-categories']); setModal(null); toast.success('Category created'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin-categories'] }); setModal(null); toast.success('Category created'); },
     onError: (e) => toast.error(e?.error?.message || 'Failed'),
   });
 
   const updateMut = useMutation({
     mutationFn: ({ id, data }) => updateCategory(id, data),
-    onSuccess: () => { qc.invalidateQueries(['admin-categories']); setModal(null); toast.success('Category updated'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin-categories'] }); setModal(null); toast.success('Category updated'); },
     onError: (e) => toast.error(e?.error?.message || 'Failed'),
   });
 
   const deleteMut = useMutation({
     mutationFn: deleteCategory,
-    onSuccess: () => { qc.invalidateQueries(['admin-categories']); toast.success('Category deleted'); setSelectedIds(new Set()); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-categories'] });
+      qc.invalidateQueries({ queryKey: ['questions'] });
+      qc.invalidateQueries({ queryKey: ['category-questions'] });
+      toast.success('Category deleted');
+      setSelectedIds(new Set());
+    },
     onError: (e) => toast.error(e?.error?.message || 'Failed to delete category'),
   });
 
   const bulkDeleteMut = useMutation({
     mutationFn: bulkDeleteCategories,
     onSuccess: () => { 
-      qc.invalidateQueries(['admin-categories']); 
-      toast.success('Categories deleted'); 
+      qc.invalidateQueries({ queryKey: ['admin-categories'] });
+      qc.invalidateQueries({ queryKey: ['questions'] });
+      qc.invalidateQueries({ queryKey: ['category-questions'] });
+      toast.success('Categories deleted');
       setSelectedIds(new Set()); 
     },
     onError: (e) => toast.error(e?.error?.message || 'Failed to delete categories'),
@@ -330,7 +338,7 @@ export default function Categories() {
 
   function handleBulkDelete() {
     if (selectedIds.size === 0) return;
-    if (window.confirm(`Are you sure you want to delete ${selectedIds.size} categories?`)) {
+    if (window.confirm(`Permanently delete ${selectedIds.size} categories and all of their questions? This cannot be undone.`)) {
       bulkDeleteMut.mutate(Array.from(selectedIds));
     }
   }
@@ -436,7 +444,7 @@ export default function Categories() {
                             {cat.is_active ? <ToggleRight size={13} /> : <ToggleLeft size={13} />}
                           </button>
                           <button 
-                            onClick={() => window.confirm('Delete category?') && deleteMut.mutate(cat.id)} 
+                            onClick={() => window.confirm('Permanently delete this category and all of its questions? This cannot be undone.') && deleteMut.mutate(cat.id)} 
                             className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/40 hover:text-red-400 transition-colors"
                             title="Delete"
                           >

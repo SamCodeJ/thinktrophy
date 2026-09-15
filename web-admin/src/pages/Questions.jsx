@@ -133,20 +133,21 @@ export default function Questions() {
 
   const createMut = useMutation({
     mutationFn: createQuestion,
-    onSuccess: () => { qc.invalidateQueries(['questions']); setModal(null); toast.success('Question added'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['questions'] }); qc.invalidateQueries({ queryKey: ['admin-categories'] }); setModal(null); toast.success('Question added'); },
     onError: (e) => toast.error(e?.error?.message || 'Failed'),
   });
 
   const updateMut = useMutation({
     mutationFn: ({ id, data }) => updateQuestion(id, data),
-    onSuccess: () => { qc.invalidateQueries(['questions']); setModal(null); toast.success('Question updated'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['questions'] }); qc.invalidateQueries({ queryKey: ['admin-categories'] }); setModal(null); toast.success('Question updated'); },
     onError: (e) => toast.error(e?.error?.message || 'Failed'),
   });
 
   const statusMut = useMutation({
     mutationFn: ({ id, is_active }) => updateQuestion(id, { is_active }),
     onSuccess: (_, { is_active }) => {
-      qc.invalidateQueries(['questions']);
+      qc.invalidateQueries({ queryKey: ['questions'] });
+      qc.invalidateQueries({ queryKey: ['admin-categories'] });
       toast.success(is_active ? 'Question activated' : 'Question deactivated');
     },
     onError: e => toast.error(e?.error?.message || 'Failed to update status'),
@@ -154,15 +155,23 @@ export default function Questions() {
 
   const deleteMut = useMutation({
     mutationFn: deleteQuestion,
-    onSuccess: () => { qc.invalidateQueries(['questions']); toast.success('Question deleted'); setSelectedIds(new Set()); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['questions'] });
+      qc.invalidateQueries({ queryKey: ['admin-categories'] });
+      qc.invalidateQueries({ queryKey: ['category-questions'] });
+      toast.success('Question deleted');
+      setSelectedIds(new Set());
+    },
     onError: (e) => toast.error(e?.error?.message || 'Failed to delete question'),
   });
 
   const bulkDeleteMut = useMutation({
     mutationFn: bulkDeleteQuestions,
     onSuccess: () => { 
-      qc.invalidateQueries(['questions']); 
-      toast.success('Questions deleted'); 
+      qc.invalidateQueries({ queryKey: ['questions'] });
+      qc.invalidateQueries({ queryKey: ['admin-categories'] });
+      qc.invalidateQueries({ queryKey: ['category-questions'] });
+      toast.success('Questions deleted');
       setSelectedIds(new Set()); 
     },
     onError: (e) => toast.error(e?.error?.message || 'Failed to delete questions'),
@@ -185,7 +194,7 @@ export default function Questions() {
 
   function handleBulkDelete() {
     if (selectedIds.size === 0) return;
-    if (window.confirm(`Are you sure you want to delete ${selectedIds.size} questions?`)) {
+    if (window.confirm(`Permanently delete ${selectedIds.size} questions? This cannot be undone.`)) {
       bulkDeleteMut.mutate(Array.from(selectedIds));
     }
   }
@@ -193,7 +202,8 @@ export default function Questions() {
   const bulkMut = useMutation({
     mutationFn: ({ fd }) => bulkUploadQuestions(fd),
     onSuccess: (res, { filename }) => {
-      qc.invalidateQueries(['questions']);
+      qc.invalidateQueries({ queryKey: ['questions'] });
+      qc.invalidateQueries({ queryKey: ['admin-categories'] });
       setUploadReport({ inserted: res.data.inserted, errors: res.data.errors || [], filename });
       setBulkFile(null);
       setModal('report');
@@ -340,7 +350,7 @@ export default function Questions() {
             {row.is_active ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}
           </button>
           <button
-            onClick={() => window.confirm('Delete question?') && deleteMut.mutate(id)}
+            onClick={() => window.confirm('Permanently delete this question? This cannot be undone.') && deleteMut.mutate(id)}
             className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/50 hover:text-red-400 transition-colors"
             title="Delete question"
           >

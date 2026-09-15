@@ -335,8 +335,11 @@ async function updateQuestion(req, res, next) {
 async function deleteQuestion(req, res, next) {
   try {
     const { id } = req.params;
-    await query('UPDATE questions SET is_active = FALSE WHERE id = $1', [id]);
-    
+    await query('DELETE FROM user_seen_questions WHERE question_id = $1', [id]);
+    const result = await query('DELETE FROM questions WHERE id = $1 RETURNING id', [id]);
+    if (!result.rows[0]) throw new AppError('Question not found', 404, 'NOT_FOUND');
+    cache.del('active_categories');
+
     await logAdminAction({
       adminId: req.admin.adminId,
       action: 'DELETE_QUESTION',
@@ -345,7 +348,7 @@ async function deleteQuestion(req, res, next) {
       ipAddress: req.ip
     });
 
-    res.json({ success: true, data: { message: 'Question deactivated' } });
+    res.json({ success: true, data: { message: 'Question deleted' } });
   } catch (err) { next(err); }
 }
 
@@ -531,7 +534,14 @@ async function updateCategory(req, res, next) {
 async function deleteCategory(req, res, next) {
   try {
     const { id } = req.params;
-    await query('UPDATE categories SET is_active = FALSE WHERE id = $1', [id]);
+    await query(
+      `DELETE FROM user_seen_questions
+       WHERE question_id IN (SELECT id FROM questions WHERE category_id = $1)`,
+      [id]
+    );
+    await query('DELETE FROM questions WHERE category_id = $1', [id]);
+    const result = await query('DELETE FROM categories WHERE id = $1 RETURNING id', [id]);
+    if (!result.rows[0]) throw new AppError('Category not found', 404, 'NOT_FOUND');
     cache.del('active_categories');
 
     await logAdminAction({
@@ -542,7 +552,7 @@ async function deleteCategory(req, res, next) {
       ipAddress: req.ip
     });
 
-    res.json({ success: true, data: { message: 'Category deactivated' } });
+    res.json({ success: true, data: { message: 'Category deleted' } });
   } catch (err) { next(err); }
 }
 
@@ -552,19 +562,24 @@ async function bulkDeleteCategories(req, res, next) {
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new AppError('No category IDs provided', 400, 'INVALID_INPUT');
     }
-    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
-    await query(`UPDATE categories SET is_active = FALSE WHERE id IN (${placeholders})`, ids);
+    await query(
+      `DELETE FROM user_seen_questions
+       WHERE question_id IN (SELECT id FROM questions WHERE category_id = ANY($1::uuid[]))`,
+      [ids]
+    );
+    await query('DELETE FROM questions WHERE category_id = ANY($1::uuid[])', [ids]);
+    const result = await query('DELETE FROM categories WHERE id = ANY($1::uuid[]) RETURNING id', [ids]);
     cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
       action: 'BULK_DELETE_CATEGORIES',
       entity: 'category',
-      details: { count: ids.length },
+      details: { count: result.rowCount },
       ipAddress: req.ip
     });
 
-    res.json({ success: true, data: { message: `${ids.length} categories deactivated` } });
+    res.json({ success: true, data: { message: `${result.rowCount} categories deleted` } });
   } catch (err) { next(err); }
 }
 
@@ -574,18 +589,19 @@ async function bulkDeleteQuestions(req, res, next) {
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new AppError('No question IDs provided', 400, 'INVALID_INPUT');
     }
-    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
-    await query(`UPDATE questions SET is_active = FALSE WHERE id IN (${placeholders})`, ids);
+    await query('DELETE FROM user_seen_questions WHERE question_id = ANY($1::uuid[])', [ids]);
+    const result = await query('DELETE FROM questions WHERE id = ANY($1::uuid[]) RETURNING id', [ids]);
+    cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
       action: 'BULK_DELETE_QUESTIONS',
       entity: 'question',
-      details: { count: ids.length },
+      details: { count: result.rowCount },
       ipAddress: req.ip
     });
 
-    res.json({ success: true, data: { message: `${ids.length} questions deactivated` } });
+    res.json({ success: true, data: { message: `${result.rowCount} questions deleted` } });
   } catch (err) { next(err); }
 }
 
