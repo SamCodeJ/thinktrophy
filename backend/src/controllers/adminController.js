@@ -644,6 +644,22 @@ async function listTransactions(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function verifyPendingDeposit(req, res, next) {
+  try {
+    const { verifyDeposit } = require('../services/paymentService');
+    const reference = decodeURIComponent(req.params.reference);
+    const data = await verifyDeposit(null, reference);
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'VERIFY_DEPOSIT',
+      entity: 'transaction',
+      details: { reference, amount: data.amount },
+      ipAddress: req.ip
+    });
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+}
+
 // ─── Users ──────────────────────────────────────────────────────────────────
 async function listUsers(req, res, next) {
   try {
@@ -1090,7 +1106,7 @@ module.exports = {
   getDashboardStats, getStatistics,
   listQuestions, createQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions, bulkDeleteQuestions,
   listAdminCategories, createCategory, updateCategory, deleteCategory, bulkDeleteCategories,
-  listTransactions, listUsers, getUserDetail, updateUserStatus,
+  listTransactions, verifyPendingDeposit, listUsers, getUserDetail, updateUserStatus,
   listGameSessions, getGameSessionDetail, correctGameSessionAnswer,
   getPublicTestimonials, listTestimonials, createTestimonial, updateTestimonial, deleteTestimonial,
   getSettings, updateSettings, getPublicSettings,

@@ -41,6 +41,7 @@ router.delete('/testimonials/:id',      requireModeratorOrAbove, ctrl.deleteTest
 
 // Transactions
 router.get('/transactions',             ctrl.listTransactions);
+router.post('/transactions/:reference/verify', requireModeratorOrAbove, ctrl.verifyPendingDeposit);
 
 // Users
 router.get('/users',                    ctrl.listUsers);

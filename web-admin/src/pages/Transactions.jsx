@@ -1,16 +1,28 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { getTransactions } from '../api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getTransactions, verifyDepositTransaction } from '../api';
 import DataTable from '../components/DataTable';
 import { format } from 'date-fns';
 import { formatNaira as fmt } from '../utils/formatNaira';
+import toast from 'react-hot-toast';
 
 export default function Transactions() {
+  const qc = useQueryClient();
   const [filters, setFilters] = useState({ type: '', status: '', from: '', to: '', page: 1, limit: 20 });
 
   const { data, isLoading } = useQuery({
     queryKey: ['transactions', filters],
     queryFn: () => getTransactions(filters),
+  });
+
+  const verifyMut = useMutation({
+    mutationFn: (reference) => verifyDepositTransaction(reference),
+    onSuccess: () => {
+      toast.success('Deposit verified and wallet credited');
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+    onError: (e) => toast.error(e?.error?.message || 'Verification failed'),
   });
 
   const transactions = data?.data || [];
@@ -34,6 +46,23 @@ export default function Transactions() {
     )},
     { key: 'reference', header: 'Reference', render: v => <span className="text-xs font-mono text-white/40">{v || '—'}</span> },
     { key: 'created_at', header: 'Date', render: v => <span className="text-white/40 text-xs">{format(new Date(v), 'MMM d, yyyy HH:mm')}</span> },
+    {
+      key: 'actions',
+      header: '',
+      sortable: false,
+      render: (_v, row) => (
+        row.type === 'deposit' && row.status === 'pending' && row.reference ? (
+          <button
+            type="button"
+            disabled={verifyMut.isPending}
+            onClick={() => verifyMut.mutate(row.reference)}
+            className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 disabled:opacity-50"
+          >
+            {verifyMut.isPending ? 'Verifying…' : 'Verify'}
+          </button>
+        ) : null
+      ),
+    },
   ];
 
   return (

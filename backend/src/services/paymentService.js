@@ -23,21 +23,97 @@ async function initiateDeposit(userId, amount) {
   };
 }
 
-async function verifyDeposit(userId, txRef) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isFlwSuccessful(status) {
+  return String(status || '').toLowerCase() === 'successful';
+}
+
+async function fetchFlutterwaveTransaction({ txRef, flwId }) {
+  if (!process.env.FLW_SECRET_KEY) {
+    throw new AppError('Payment gateway is not configured', 500, 'GATEWAY_ERROR');
+  }
+
+  const headers = { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` };
+  let lastDetail = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (flwId) {
+        const byId = await axios.get(
+          `https://api.flutterwave.com/v3/transactions/${flwId}/verify`,
+          { headers }
+        );
+        if (byId.data.status === 'success' && byId.data.data) {
+          return byId.data.data;
+        }
+        lastDetail = byId.data;
+      }
+
+      const byRef = await axios.get(
+        'https://api.flutterwave.com/v3/transactions/verify_by_reference',
+        { params: { tx_ref: txRef }, headers }
+      );
+      if (byRef.data.status === 'success' && byRef.data.data) {
+        return byRef.data.data;
+      }
+      lastDetail = byRef.data;
+    } catch (err) {
+      lastDetail = err.response?.data || err.message;
+      console.error('Flutterwave verify error:', lastDetail);
+    }
+
+    if (attempt < 2) await sleep(1500);
+  }
+
+  throw new AppError('Unable to verify transaction with Flutterwave', 400, 'VERIFICATION_FAILED');
+}
+
+function notifyDepositSuccess(user, amount) {
+  if (!user?.email) return;
+  sendActionEmail(
+    user.email,
+    user.username,
+    'Deposit Successful',
+    `Your deposit of ₦${parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been successfully verified and added to your wallet.`
+  ).catch(err => console.error('Failed to send deposit email:', err));
+}
+
+// userId is optional (admin / webhook). Always re-checks Flutterwave before crediting.
+async function verifyDeposit(userId, txRef, { flwId } = {}) {
+  const flwData = await fetchFlutterwaveTransaction({ txRef, flwId });
+
+  if (!isFlwSuccessful(flwData.status)) {
+    throw new AppError('Transaction was not successful on Flutterwave', 400, 'TX_FAILED');
+  }
+  if (flwData.tx_ref && flwData.tx_ref !== txRef) {
+    throw new AppError('Payment reference mismatch', 400, 'REFERENCE_MISMATCH');
+  }
+
   const client = await getClient();
   try {
     await client.query('BEGIN');
 
-    const txRes = await client.query(
-      `SELECT * FROM transactions WHERE reference = $1 AND user_id = $2 AND type = 'deposit' FOR UPDATE`,
-      [txRef, userId]
-    );
+    const txRes = userId
+      ? await client.query(
+          `SELECT * FROM transactions WHERE reference = $1 AND user_id = $2 AND type = 'deposit' FOR UPDATE`,
+          [txRef, userId]
+        )
+      : await client.query(
+          `SELECT * FROM transactions WHERE reference = $1 AND type = 'deposit' FOR UPDATE`,
+          [txRef]
+        );
     const tx = txRes.rows[0];
     if (!tx) throw new AppError('Transaction not found', 404, 'NOT_FOUND');
+
+    const ownerId = tx.user_id;
+
     if (tx.status === 'verified') {
       const walletRes = await client.query(
         'SELECT wallet_balance FROM users WHERE id = $1',
-        [userId]
+        [ownerId]
       );
       await client.query('COMMIT');
       return {
@@ -45,31 +121,6 @@ async function verifyDeposit(userId, txRef) {
         newBalance: parseFloat(walletRes.rows[0].wallet_balance),
         reference:  tx.reference,
       };
-    }
-
-    if (!process.env.FLW_SECRET_KEY) {
-      throw new AppError('Payment gateway is not configured', 500, 'GATEWAY_ERROR');
-    }
-
-    // Verify with Flutterwave using our tx_ref (more reliable than redirect transaction_id)
-    const flwRes = await axios.get(
-      'https://api.flutterwave.com/v3/transactions/verify_by_reference',
-      {
-        params: { tx_ref: txRef },
-        headers: {
-          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-        }
-      }
-    );
-
-    if (flwRes.data.status !== 'success') {
-      throw new AppError('Unable to verify transaction with Flutterwave', 400, 'VERIFICATION_FAILED');
-    }
-
-    const flwData = flwRes.data.data;
-
-    if (flwData.status !== 'successful') {
-      throw new AppError('Transaction was not successful on Flutterwave', 400, 'TX_FAILED');
     }
 
     const paidAmount = parseFloat(flwData.amount);
@@ -85,36 +136,26 @@ async function verifyDeposit(userId, txRef) {
 
     await client.query(
       `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
-      [tx.amount, userId]
+      [tx.amount, ownerId]
     );
 
     const walletRes = await client.query(
       'SELECT username, email, wallet_balance FROM users WHERE id = $1',
-      [userId]
+      [ownerId]
     );
 
     await client.query('COMMIT');
-    
-    // Sync to Zoho Books asynchronously
+
     const zohoService = require('./zohoService');
-    zohoService.syncDeposit(userId, tx.amount, tx.reference)
+    zohoService.syncDeposit(ownerId, tx.amount, tx.reference)
       .catch(err => console.error('Failed to sync deposit to Zoho Books:', err));
-    
-    // Send email notification (non-blocking)
-    const user = walletRes.rows[0];
-    if (user && user.email) {
-      sendActionEmail(
-        user.email,
-        user.username,
-        'Deposit Successful',
-        `Your deposit of ₦${parseFloat(tx.amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been successfully verified and added to your wallet.`
-      ).catch(err => console.error('Failed to send deposit email:', err));
-    }
+
+    notifyDepositSuccess(walletRes.rows[0], tx.amount);
 
     return {
-      amount:         parseFloat(tx.amount),
-      newBalance:     parseFloat(walletRes.rows[0].wallet_balance),
-      reference:      tx.reference,
+      amount:     parseFloat(tx.amount),
+      newBalance: parseFloat(walletRes.rows[0].wallet_balance),
+      reference:  tx.reference,
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -208,89 +249,111 @@ async function requestWithdrawal(userId, amount, accountDetails) {
   }
 }
 
+async function handleTransferCompleted(data) {
+  const reference = data.reference;
+  const status = String(data.status || '').toUpperCase();
+  let logStatus = 'processed';
+  let logError = null;
+  let tx = null;
+
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    const txRes = await client.query(
+      `SELECT * FROM transactions WHERE reference = $1 AND type = 'withdrawal' FOR UPDATE`,
+      [reference]
+    );
+    tx = txRes.rows[0];
+
+    if (tx && tx.status === 'pending') {
+      if (status === 'SUCCESSFUL') {
+        await client.query(`UPDATE transactions SET status = 'verified' WHERE id = $1`, [tx.id]);
+      } else if (status === 'FAILED') {
+        await client.query(`UPDATE transactions SET status = 'failed' WHERE id = $1`, [tx.id]);
+        await client.query(
+          `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
+          [tx.amount, tx.user_id]
+        );
+      }
+    } else {
+      logStatus = 'ignored';
+      logError = 'Transaction not found or not pending';
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  if (logStatus === 'processed' && tx) {
+    const zohoService = require('./zohoService');
+    const meta = typeof tx.metadata === 'string' ? JSON.parse(tx.metadata) : (tx.metadata || {});
+    const transferAmount = meta.transfer_amount || tx.amount;
+    const fee = meta.fee || 0;
+
+    if (status === 'SUCCESSFUL') {
+      zohoService.syncWithdrawalSuccess(tx.user_id, transferAmount, tx.reference)
+        .catch(err => console.error('Failed to sync withdrawal success to Zoho Books:', err));
+    } else if (status === 'FAILED') {
+      zohoService.syncWithdrawalFailed(tx.user_id, tx.amount, fee, tx.reference)
+        .catch(err => console.error('Failed to sync withdrawal failure to Zoho Books:', err));
+    }
+  }
+
+  return { logStatus, logError };
+}
+
+async function logWebhook(event, payload, status, errorMessage) {
+  await query(
+    `INSERT INTO webhook_logs (provider, event_type, payload, status, error_message)
+     VALUES ('flutterwave', $1, $2, $3, $4)`,
+    [event || 'unknown', JSON.stringify(payload), status, errorMessage]
+  );
+}
+
 // Webhook handler
 async function handleWebhook(payload, signature) {
   const secretHash = process.env.FLW_SECRET_HASH;
-  if (!signature || signature !== secretHash) {
+  if (!secretHash || !signature || signature !== secretHash) {
     throw new AppError('Invalid webhook signature', 401, 'UNAUTHORIZED');
   }
 
   const { event, data } = payload;
   let logStatus = 'processed';
   let logError = null;
-  
-  const client = await getClient();
-  try {
-    await client.query('BEGIN');
 
-    if (event === 'transfer.completed') {
-      const reference = data.reference;
-      const status = data.status; // 'SUCCESSFUL' or 'FAILED'
-      
-      const txRes = await client.query(
-        `SELECT * FROM transactions WHERE reference = $1 AND type = 'withdrawal' FOR UPDATE`,
-        [reference]
-      );
-      const tx = txRes.rows[0];
-      
-      if (tx && tx.status === 'pending') {
-        if (status === 'SUCCESSFUL') {
-          await client.query(`UPDATE transactions SET status = 'verified' WHERE id = $1`, [tx.id]);
-        } else if (status === 'FAILED') {
-          await client.query(`UPDATE transactions SET status = 'failed' WHERE id = $1`, [tx.id]);
-          // Refund user
-          await client.query(`UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`, [tx.amount, tx.user_id]);
-        }
-      } else {
+  try {
+    if (event === 'charge.completed') {
+      if (!isFlwSuccessful(data?.status)) {
         logStatus = 'ignored';
-        logError = 'Transaction not found or not pending';
+        logError = `Charge status ${data?.status || 'unknown'}`;
+      } else if (!data?.tx_ref) {
+        logStatus = 'ignored';
+        logError = 'Missing tx_ref';
+      } else {
+        await verifyDeposit(null, data.tx_ref, { flwId: data.id });
       }
+    } else if (event === 'transfer.completed') {
+      const result = await handleTransferCompleted(data);
+      logStatus = result.logStatus;
+      logError = result.logError;
     } else {
       logStatus = 'ignored';
       logError = 'Unhandled event type';
     }
 
-    // Log the webhook
-    await client.query(
-      `INSERT INTO webhook_logs (provider, event_type, payload, status, error_message)
-       VALUES ('flutterwave', $1, $2, $3, $4)`,
-      [event || 'unknown', JSON.stringify(payload), logStatus, logError]
-    );
-
-    await client.query('COMMIT');
-    
-    // Sync with Zoho Books
-    if (logStatus === 'processed' && event === 'transfer.completed') {
-      const zohoService = require('./zohoService');
-      const meta = typeof tx.metadata === 'string' ? JSON.parse(tx.metadata) : (tx.metadata || {});
-      const transferAmount = meta.transfer_amount || tx.amount;
-      const fee = meta.fee || 0;
-      
-      if (status === 'SUCCESSFUL') {
-        zohoService.syncWithdrawalSuccess(tx.user_id, transferAmount, tx.reference)
-          .catch(err => console.error('Failed to sync withdrawal success to Zoho Books:', err));
-      } else if (status === 'FAILED') {
-        zohoService.syncWithdrawalFailed(tx.user_id, tx.amount, fee, tx.reference)
-          .catch(err => console.error('Failed to sync withdrawal failure to Zoho Books:', err));
-      }
-    }
+    await logWebhook(event, payload, logStatus, logError);
   } catch (err) {
-    await client.query('ROLLBACK');
-    
-    // Attempt to log the failure
     try {
-      await query(
-        `INSERT INTO webhook_logs (provider, event_type, payload, status, error_message)
-         VALUES ('flutterwave', $1, $2, 'failed', $3)`,
-        [event || 'unknown', JSON.stringify(payload), err.message]
-      );
+      await logWebhook(event, payload, 'failed', err.message);
     } catch (logErr) {
       console.error('Failed to log webhook error:', logErr);
     }
-    
     throw err;
-  } finally {
-    client.release();
   }
 }
 

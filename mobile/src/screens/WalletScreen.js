@@ -163,11 +163,41 @@ export default function WalletScreen() {
     onError: e => Alert.alert('Error', e?.error?.message || 'Deposit failed'),
   });
 
-  const handleNavigationStateChange = async (navState) => {
-    if (!navState.url.includes('flutterwave.com/rn-redirect')) return;
-    if (verifyingRef.current) return;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  async function confirmDeposit(txRef, { showCancelMessage = false } = {}) {
+    if (!txRef || verifyingRef.current) return;
     verifyingRef.current = true;
     setPaymentLink(null);
+
+    let lastError = null;
+    for (let i = 0; i < 3; i++) {
+      try {
+        await verifyPayment(txRef);
+        qc.invalidateQueries({ queryKey: ['wallet'] });
+        qc.invalidateQueries({ queryKey: ['profile'] });
+        setDepositAmount('');
+        setPaymentRef(null);
+        Alert.alert('Success', `${fmt(parseFloat(depositAmount) || 0)} credited to your wallet!`);
+        verifyingRef.current = false;
+        return;
+      } catch (e) {
+        lastError = e;
+        if (i < 2) await sleep(2000);
+      }
+    }
+
+    console.error('Verify payment error:', lastError);
+    verifyingRef.current = false;
+    Alert.alert(
+      showCancelMessage ? 'Checkout closed' : 'Verification pending',
+      lastError?.error?.message
+        || 'If you completed payment, your wallet will update shortly. If it does not, contact support with your payment reference.'
+    );
+  }
+
+  const handleNavigationStateChange = async (navState) => {
+    if (!navState.url.includes('flutterwave.com/rn-redirect')) return;
 
     const params = {};
     if (navState.url.includes('?')) {
@@ -179,34 +209,23 @@ export default function WalletScreen() {
     }
 
     const txRef = paymentRef || params.tx_ref;
-    if (!txRef) {
-      verifyingRef.current = false;
-      Alert.alert('Verification Failed', 'Could not find payment reference. Please contact support.');
+    const status = String(params.status || '').toLowerCase();
+    const paid = status === 'successful' || status === 'completed' || status === 'success';
+
+    if (paid || txRef) {
+      await confirmDeposit(txRef);
       return;
     }
 
-    if (params.status === 'successful') {
-      try {
-        await verifyPayment(txRef);
-        qc.invalidateQueries({ queryKey: ['wallet'] });
-        qc.invalidateQueries({ queryKey: ['profile'] });
-        setDepositAmount('');
-        setPaymentRef(null);
-        Alert.alert('Success', `${fmt(parseFloat(depositAmount) || 0)} credited to your wallet!`);
-      } catch (e) {
-        console.error('Verify payment error:', e);
-        Alert.alert(
-          'Verification Failed',
-          e?.error?.message || 'Payment was successful but verification failed. Please contact support.'
-        );
-      } finally {
-        verifyingRef.current = false;
-      }
-    } else {
-      verifyingRef.current = false;
-      setPaymentRef(null);
-      Alert.alert('Payment Failed', 'Your payment was not successful or was cancelled.');
-    }
+    setPaymentLink(null);
+    setPaymentRef(null);
+    Alert.alert('Payment Failed', 'Your payment was not successful or was cancelled.');
+  };
+
+  const closeCheckout = () => {
+    const ref = paymentRef;
+    setPaymentLink(null);
+    if (ref) confirmDeposit(ref, { showCancelMessage: true });
   };
 
   const resolveMut = useMutation({
@@ -251,7 +270,7 @@ export default function WalletScreen() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.dark }}>
         <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.darker }}>
-          <TouchableOpacity onPress={() => setPaymentLink(null)}>
+          <TouchableOpacity onPress={closeCheckout}>
             <Text style={{ fontSize: 16, color: colors.blue }}>Cancel</Text>
           </TouchableOpacity>
           <Text style={{ flex: 1, textAlign: 'center', fontSize: 16, fontWeight: 'bold', color: '#fff' }}>Secure Checkout</Text>
