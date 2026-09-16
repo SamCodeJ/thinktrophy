@@ -664,7 +664,9 @@ async function verifyPendingDeposit(req, res, next) {
       throw new AppError('Transaction has no payment reference', 400, 'MISSING_REFERENCE');
     }
 
-    const data = await verifyDeposit(tx.user_id, tx.reference);
+    const data = await verifyDeposit(tx.user_id, tx.reference, {
+      flwId: req.body?.flw_transaction_id,
+    });
     await logAdminAction({
       adminId: req.admin.adminId,
       action: 'VERIFY_DEPOSIT',

@@ -16,13 +16,23 @@ export default function Transactions() {
   });
 
   const verifyMut = useMutation({
-    mutationFn: (id) => verifyDepositTransaction(id),
+    mutationFn: ({ id, flwId }) => verifyDepositTransaction(id, flwId),
     onSuccess: () => {
       toast.success('Deposit verified and wallet credited');
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
-    onError: (e) => toast.error(e?.error?.message || 'Verification failed'),
+    onError: (e, vars) => {
+      toast.error(e?.error?.message || 'Verification failed');
+      if (e?.error?.code === 'VERIFICATION_FAILED' && !vars?.flwId) {
+        const pasted = window.prompt(
+          'Flutterwave did not find this payment reference. Paste the numeric Transaction ID from the Flutterwave dashboard (or cancel).'
+        );
+        if (pasted && pasted.trim()) {
+          verifyMut.mutate({ id: vars.id, flwId: pasted.trim() });
+        }
+      }
+    },
   });
 
   const transactions = data?.data || [];
@@ -51,12 +61,12 @@ export default function Transactions() {
       header: '',
       sortable: false,
       render: (_v, row) => {
-        const isThisRow = verifyMut.isPending && verifyMut.variables === row.id;
+        const isThisRow = verifyMut.isPending && verifyMut.variables?.id === row.id;
         return row.type === 'deposit' && row.status === 'pending' && row.reference ? (
           <button
             type="button"
             disabled={isThisRow}
-            onClick={() => verifyMut.mutate(row.id)}
+            onClick={() => verifyMut.mutate({ id: row.id })}
             className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 disabled:opacity-50"
           >
             {isThisRow ? 'Verifying…' : 'Verify'}

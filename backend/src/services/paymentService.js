@@ -31,44 +31,90 @@ function isFlwSuccessful(status) {
   return String(status || '').toLowerCase() === 'successful';
 }
 
-async function fetchFlutterwaveTransaction({ txRef, flwId }) {
+function numericFlwId(value) {
+  if (value == null || value === '') return null;
+  const digits = String(value).trim();
+  return /^\d+$/.test(digits) ? digits : null;
+}
+
+function ymd(date) {
+  return new Date(date).toISOString().slice(0, 10);
+}
+
+function flwKeyMode() {
+  const key = process.env.FLW_SECRET_KEY || '';
+  if (key.includes('_TEST') || key.includes('TEST-')) return 'TEST';
+  if (key.startsWith('FLWSECK-')) return 'LIVE';
+  return 'UNKNOWN';
+}
+
+async function fetchFlutterwaveTransaction({ txRef, flwId, createdAt }) {
   if (!process.env.FLW_SECRET_KEY) {
     throw new AppError('Payment gateway is not configured', 500, 'GATEWAY_ERROR');
   }
 
   const headers = { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` };
+  const id = numericFlwId(flwId);
   let lastDetail = null;
+
+  const verifyByNumericId = async (nid) => {
+    const byId = await axios.get(
+      `https://api.flutterwave.com/v3/transactions/${nid}/verify`,
+      { headers }
+    );
+    if (byId.data.status === 'success' && byId.data.data) return byId.data.data;
+    const err = new Error(byId.data?.message || 'Verify by id failed');
+    err.payload = byId.data;
+    throw err;
+  };
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      if (flwId) {
-        const byId = await axios.get(
-          `https://api.flutterwave.com/v3/transactions/${flwId}/verify`,
-          { headers }
+      if (id) return await verifyByNumericId(id);
+
+      try {
+        const byRef = await axios.get(
+          'https://api.flutterwave.com/v3/transactions/verify_by_reference',
+          { params: { tx_ref: txRef }, headers }
         );
-        if (byId.data.status === 'success' && byId.data.data) {
-          return byId.data.data;
-        }
-        lastDetail = byId.data;
+        if (byRef.data.status === 'success' && byRef.data.data) return byRef.data.data;
+        lastDetail = byRef.data;
+      } catch (err) {
+        lastDetail = err.response?.data || err.payload || err.message;
       }
 
-      const byRef = await axios.get(
-        'https://api.flutterwave.com/v3/transactions/verify_by_reference',
-        { params: { tx_ref: txRef }, headers }
-      );
-      if (byRef.data.status === 'success' && byRef.data.data) {
-        return byRef.data.data;
-      }
-      lastDetail = byRef.data;
+      const created = createdAt ? new Date(createdAt) : new Date();
+      const from = new Date(created.getTime() - 2 * 24 * 60 * 60 * 1000);
+      const to = new Date(created.getTime() + 2 * 24 * 60 * 60 * 1000);
+      const listed = await axios.get('https://api.flutterwave.com/v3/transactions', {
+        headers,
+        params: {
+          from: ymd(from),
+          to: ymd(to),
+          tx_ref: txRef,
+          currency: 'NGN',
+        },
+      });
+      const rows = Array.isArray(listed.data.data) ? listed.data.data : [];
+      const match = rows.find(r => String(r.tx_ref) === String(txRef));
+      if (match?.id) return await verifyByNumericId(match.id);
+      lastDetail = listed.data;
     } catch (err) {
-      lastDetail = err.response?.data || err.message;
-      console.error('Flutterwave verify error:', lastDetail);
+      lastDetail = err.response?.data || err.payload || err.message;
     }
 
+    console.error(
+      `Flutterwave verify error (${flwKeyMode()}) tx_ref=${txRef}`,
+      lastDetail
+    );
     if (attempt < 2) await sleep(1500);
   }
 
-  throw new AppError('Unable to verify transaction with Flutterwave', 400, 'VERIFICATION_FAILED');
+  throw new AppError(
+    `Flutterwave has no charge for reference ${txRef} using the ${flwKeyMode()} secret key. Confirm this exact tx_ref on the Flutterwave dashboard, or retry with the numeric Flutterwave transaction ID.`,
+    400,
+    'VERIFICATION_FAILED'
+  );
 }
 
 function notifyDepositSuccess(user, amount) {
@@ -83,12 +129,42 @@ function notifyDepositSuccess(user, amount) {
 
 // userId is optional (admin / webhook). Always re-checks Flutterwave before crediting.
 async function verifyDeposit(userId, txRef, { flwId } = {}) {
-  const flwData = await fetchFlutterwaveTransaction({ txRef, flwId });
+  const peekRes = userId
+    ? await query(
+        `SELECT id, user_id, type, status, amount, reference, created_at
+         FROM transactions WHERE reference = $1 AND user_id = $2 AND type = 'deposit'`,
+        [txRef, userId]
+      )
+    : await query(
+        `SELECT id, user_id, type, status, amount, reference, created_at
+         FROM transactions WHERE reference = $1 AND type = 'deposit'`,
+        [txRef]
+      );
+  const peekTx = peekRes.rows[0];
+  if (!peekTx) throw new AppError('Transaction not found', 404, 'NOT_FOUND');
+
+  if (peekTx.status === 'verified') {
+    const walletRes = await query(
+      'SELECT wallet_balance FROM users WHERE id = $1',
+      [peekTx.user_id]
+    );
+    return {
+      amount:     parseFloat(peekTx.amount),
+      newBalance: parseFloat(walletRes.rows[0].wallet_balance),
+      reference:  peekTx.reference,
+    };
+  }
+
+  const flwData = await fetchFlutterwaveTransaction({
+    txRef,
+    flwId,
+    createdAt: peekTx.created_at,
+  });
 
   if (!isFlwSuccessful(flwData.status)) {
     throw new AppError('Transaction was not successful on Flutterwave', 400, 'TX_FAILED');
   }
-  if (flwData.tx_ref && flwData.tx_ref !== txRef) {
+  if (flwData.tx_ref && flwData.tx_ref !== txRef && !flwId) {
     throw new AppError('Payment reference mismatch', 400, 'REFERENCE_MISMATCH');
   }
 

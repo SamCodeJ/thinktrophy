@@ -40,8 +40,11 @@ export const getCategoryQuestions = (categoryId) =>
 
 // Transactions
 export const getTransactions = (params) => client.get('/api/admin/transactions', { params });
-export const verifyDepositTransaction = (id) =>
-  client.post(`/api/admin/transactions/${encodeURIComponent(id)}/verify`);
+export const verifyDepositTransaction = (id, flwTransactionId) =>
+  client.post(
+    `/api/admin/transactions/${encodeURIComponent(id)}/verify`,
+    flwTransactionId ? { flw_transaction_id: flwTransactionId } : {}
+  );
 
 // Users
 export const getUsers = (params) => client.get('/api/admin/users', { params });
