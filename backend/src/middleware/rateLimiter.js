@@ -29,4 +29,15 @@ const answerLimiter = rateLimit({
   },
 });
 
-module.exports = { authLimiter, apiLimiter, answerLimiter };
+const moneyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: {
+    success: false,
+    error: { code: 'RATE_LIMITED', message: 'Too many payment attempts. Please try again later.' },
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { authLimiter, apiLimiter, answerLimiter, moneyLimiter };

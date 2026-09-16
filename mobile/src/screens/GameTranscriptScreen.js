@@ -152,9 +152,11 @@ export default function GameTranscriptScreen({ navigation, route }) {
                   {['a', 'b', 'c', 'd'].map(key => {
                     const text       = q.options?.[key];
                     if (!text) return null;
-                    const isCorrect  = key === q.correct_option;
                     const isChosen   = key === q.chosen_option;
-                    const isWrongPick = isChosen && !isCorrect;
+                    const isCorrect  = q.correct_option
+                      ? key === q.correct_option
+                      : (isChosen && Boolean(q.is_correct));
+                    const isWrongPick = isChosen && !q.is_correct;
 
                     return (
                       <View

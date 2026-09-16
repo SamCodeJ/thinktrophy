@@ -42,7 +42,7 @@ const submitAnswerSchema = z.object({
 });
 
 const depositSchema = z.object({
-  amount:    z.number().min(1),
+  amount:    z.number().min(1).max(1000000),
   reference: z.string().optional(),
 });
 

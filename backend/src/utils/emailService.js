@@ -35,13 +35,12 @@ const transporter = nodemailer.createTransport({
     pass: process.env.SMTP_PASS,
   },
   tls: {
-    // Do not fail on invalid/self-signed certs
-    rejectUnauthorized: false,
+    rejectUnauthorized: process.env.NODE_ENV === 'production',
   },
 });
 
 async function sendVerificationEmail(to, username, token) {
-  const verifyUrl = `${process.env.APP_URL}/api/auth/verify-email?token=${token}`;
+  const verifyUrl = `${process.env.APP_URL}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
 
   try {
     await transporter.sendMail({

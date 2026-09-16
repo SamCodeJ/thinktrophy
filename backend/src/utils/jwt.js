@@ -29,6 +29,15 @@ function getAlgorithm() {
   return hasRsaKey ? 'RS256' : 'HS256';
 }
 
+function getRefreshSecret() {
+  const secret = process.env.JWT_REFRESH_SECRET;
+  if (!secret || secret === 'REPLACE_WITH_LONG_RANDOM_STRING_64_CHARS') {
+    if (!isDev) throw new Error('JWT_REFRESH_SECRET is not configured');
+    return 'dev-refresh-secret';
+  }
+  return secret;
+}
+
 // ─── Access token (15min) ───────────────────────────────────────────────────
 function signAccessToken(payload) {
   const algo = getAlgorithm();
@@ -48,14 +57,14 @@ function verifyAccessToken(token) {
 
 // ─── Refresh token (7d) ─────────────────────────────────────────────────────
 function signRefreshToken(payload) {
-  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret', {
+  return jwt.sign(payload, getRefreshSecret(), {
     expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d',
     issuer: 'thinktrophy',
   });
 }
 
 function verifyRefreshToken(token) {
-  return jwt.verify(token, process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret', {
+  return jwt.verify(token, getRefreshSecret(), {
     issuer: 'thinktrophy',
   });
 }

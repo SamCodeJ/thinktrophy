@@ -33,6 +33,18 @@ async function createSession(userId, categoryIds, stakeAmount) {
   try {
     await client.query('BEGIN');
 
+    // Lock the user row first so concurrent creates cannot double-debit.
+    const wallet = await client.query(
+      'SELECT username, email, wallet_balance, email_verified FROM users WHERE id = $1 FOR UPDATE',
+      [userId]
+    );
+    if (!wallet.rows[0])
+      throw new AppError('User not found', 404, 'NOT_FOUND');
+    if (!wallet.rows[0].email_verified)
+      throw new AppError('Please verify your email before playing', 403, 'EMAIL_NOT_VERIFIED');
+    if (parseFloat(wallet.rows[0].wallet_balance) < stakeAmount)
+      throw new AppError('Insufficient wallet balance', 400, 'INSUFFICIENT_BALANCE');
+
     // Auto-expire any stale active sessions older than 2 minutes before checking
     await client.query(
       `UPDATE game_sessions
@@ -50,18 +62,6 @@ async function createSession(userId, categoryIds, stakeAmount) {
     );
     if (existing.rows.length > 0)
       throw new AppError('You already have an active game session', 409, 'SESSION_ACTIVE');
-
-    // Check wallet balance and email verification
-    const wallet = await client.query(
-      'SELECT username, email, wallet_balance, email_verified FROM users WHERE id = $1 FOR UPDATE',
-      [userId]
-    );
-    if (!wallet.rows[0])
-      throw new AppError('User not found', 404, 'NOT_FOUND');
-    if (!wallet.rows[0].email_verified)
-      throw new AppError('Please verify your email before playing', 403, 'EMAIL_NOT_VERIFIED');
-    if (parseFloat(wallet.rows[0].wallet_balance) < stakeAmount)
-      throw new AppError('Insufficient wallet balance', 400, 'INSUFFICIENT_BALANCE');
 
     const availability = await getCategoriesForUser(userId);
     const byId = new Map(availability.map(c => [c.id, c]));
@@ -81,16 +81,16 @@ async function createSession(userId, categoryIds, stakeAmount) {
     // Build questions — skip any this user has already seen
     const { trackA, trackB, answerMaps } = await buildSessionQuestions(categoryIds, userId);
 
-    // Deduct stake
-    await client.query(
-      'UPDATE users SET wallet_balance = wallet_balance - $1, total_staked = total_staked + $1 WHERE id = $2',
+    // Deduct stake atomically
+    const debit = await client.query(
+      `UPDATE users
+       SET wallet_balance = wallet_balance - $1, total_staked = total_staked + $1
+       WHERE id = $2 AND wallet_balance >= $1
+       RETURNING id`,
       [stakeAmount, userId]
     );
-
-    // Sync stake to Zoho Books
-    const zohoService = require('./zohoService');
-    zohoService.syncStake(userId, stakeAmount, `SESSION-${Date.now()}`)
-      .catch(err => console.error('Failed to sync stake to Zoho Books:', err));
+    if (!debit.rowCount)
+      throw new AppError('Insufficient wallet balance', 400, 'INSUFFICIENT_BALANCE');
 
     // Create session row
     const now = new Date();
@@ -136,6 +136,10 @@ async function createSession(userId, categoryIds, stakeAmount) {
 
     await client.query('COMMIT');
 
+    const zohoService = require('./zohoService');
+    zohoService.syncStake(userId, stakeAmount, `SESSION-${sessionId}`)
+      .catch(err => console.error('Failed to sync stake to Zoho Books:', err));
+
     // Return first question
     const firstQuestionId = trackB[0]; // default to track B; track isn't determined yet
     await markQuestionsSeen(userId, [firstQuestionId]);
@@ -163,6 +167,9 @@ async function createSession(userId, categoryIds, stakeAmount) {
     };
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.code === '23505') {
+      throw new AppError('You already have an active game session', 409, 'SESSION_ACTIVE');
+    }
     throw err;
   } finally {
     client.release();
@@ -372,8 +379,6 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
         stakeAmount:  stake,
         answersSubmitted,
         isCorrect,
-        correctOption: question.correct_option,
-        correctText:   question[`option_${question.correct_option}`],
       };
     }
 
@@ -398,8 +403,6 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
     return {
       gameComplete:   false,
       isCorrect,
-      correctOption:  question.correct_option,
-      correctText:    question[`option_${question.correct_option}`],
       score:          newScore,
       questionNumber: newIdx + 1,
       totalQuestions: 10,

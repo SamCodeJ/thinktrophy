@@ -19,7 +19,7 @@ function requireUser(req, res, next) {
   }
 }
 
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
   const header = req.headers['authorization'];
   if (!header || !header.startsWith('Bearer ')) {
     return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No token provided' } });
@@ -27,10 +27,18 @@ function requireAdmin(req, res, next) {
   const token = header.slice(7);
   try {
     const decoded = verifyAccessToken(token);
-    if (decoded.type !== 'admin') {
+    if (decoded.type !== 'admin' || !decoded.adminId) {
       return res.status(401).json({ success: false, error: { code: 'FORBIDDEN', message: 'Admin access required' } });
     }
-    req.admin = decoded;
+    const result = await query(
+      'SELECT id, name, email, role FROM admins WHERE id = $1',
+      [decoded.adminId]
+    );
+    const admin = result.rows[0];
+    if (!admin) {
+      return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Admin account not found' } });
+    }
+    req.admin = { type: 'admin', adminId: admin.id, email: admin.email, role: admin.role, name: admin.name };
     next();
   } catch (err) {
     return res.status(401).json({ success: false, error: { code: 'TOKEN_EXPIRED', message: err.message } });
@@ -69,4 +77,22 @@ async function requireActiveUser(req, res, next) {
   });
 }
 
-module.exports = { requireUser, requireAdmin, requireSuperAdmin, requireModeratorOrAbove, requireActiveUser };
+async function requireVerifiedEmail(req, res, next) {
+  try {
+    if (!req.user?.userId) {
+      return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No token provided' } });
+    }
+    const result = await query('SELECT email_verified FROM users WHERE id = $1', [req.user.userId]);
+    if (!result.rows[0]?.email_verified) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'EMAIL_NOT_VERIFIED', message: 'Please verify your email before using wallet features' },
+      });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { requireUser, requireAdmin, requireSuperAdmin, requireModeratorOrAbove, requireActiveUser, requireVerifiedEmail };

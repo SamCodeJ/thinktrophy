@@ -18,8 +18,24 @@ const PORT = process.env.PORT || 4000;
 
 // ─── Security ───────────────────────────────────────────────────────────────
 app.use(helmet());
+
+function corsOrigin() {
+  const raw = (process.env.CORS_ORIGIN || '').trim();
+  if (!raw || raw === '*') {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('CORS_ORIGIN must be an explicit allowlist in production');
+    }
+    return true;
+  }
+  const allowlist = raw.split(',').map(s => s.trim()).filter(Boolean);
+  return (origin, callback) => {
+    if (!origin || allowlist.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  };
+}
+
 app.use(cors({
-  origin:      process.env.CORS_ORIGIN || '*',
+  origin:      corsOrigin(),
   credentials: true,
   methods:     ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
 }));

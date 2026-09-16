@@ -142,9 +142,14 @@ export default function WalletScreen() {
       setDepositModal(false);
       
       try {
+        const flwPublicKey = process.env.EXPO_PUBLIC_FLW_PUBLIC_KEY;
+        if (!flwPublicKey) {
+          Alert.alert('Error', 'Payment is not configured. Missing Flutterwave public key.');
+          return;
+        }
         const link = await FlutterwaveInit({
           tx_ref: ref,
-          authorization: 'FLWPUBK-73d87d50b8b62e775d871ffa0c8e5d0b-X',
+          authorization: flwPublicKey,
           customer: {
             email: userEmail,
             name: userName

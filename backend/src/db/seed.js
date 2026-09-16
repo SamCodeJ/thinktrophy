@@ -153,6 +153,11 @@ const questionsByCat = [
 ];
 
 async function seed() {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('Refusing to seed known demo credentials in production.');
+    process.exit(1);
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

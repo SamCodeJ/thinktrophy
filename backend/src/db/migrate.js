@@ -60,11 +60,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified                BOOLEAN
 ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_hash       TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires_at TIMESTAMPTZ;
 
-ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_code_hash      TEXT;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at     TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_locked_until TIMESTAMPTZ;
+ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_locked_until TIMESTAMPTZ;
 
-ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_code_hash     TEXT;
-ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_expires_at    TIMESTAMPTZ;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_wallet_balance_non_negative;
+ALTER TABLE users ADD CONSTRAINT users_wallet_balance_non_negative CHECK (wallet_balance >= 0);
 
 -- Add referral system columns
 ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(20) UNIQUE;
@@ -139,6 +141,20 @@ CREATE TABLE IF NOT EXISTS game_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user   ON game_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON game_sessions(status);
+
+-- Keep only the newest active session per user, then enforce uniqueness
+UPDATE game_sessions SET status = 'expired', completed_at = COALESCE(completed_at, NOW())
+WHERE id IN (
+  SELECT id FROM (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY started_at DESC NULLS LAST, created_at DESC) AS rn
+    FROM game_sessions
+    WHERE status = 'active'
+  ) ranked
+  WHERE rn > 1
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_session_per_user
+  ON game_sessions (user_id) WHERE status = 'active';
 
 -- ─────────────────────────────────────────────────
 --  ADMIN LOGS

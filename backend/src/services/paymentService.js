@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { sendActionEmail } = require('../utils/emailService');
 const { formatNaira } = require('../utils/formatNaira');
 const axios = require('axios');
+const crypto = require('crypto');
 // No need for a custom httpsAgent for Flutterwave, as it was working previously and causes EPROTO errors
 
 
@@ -201,6 +202,10 @@ async function verifyDeposit(userId, txRef, { flwId } = {}) {
 
     const paidAmount = parseFloat(flwData.amount);
     const expectedAmount = parseFloat(tx.amount);
+    const currency = String(flwData.currency || '').toUpperCase();
+    if (currency && currency !== 'NGN') {
+      throw new AppError('Payment currency mismatch', 400, 'CURRENCY_MISMATCH');
+    }
     if (paidAmount < expectedAmount) {
       throw new AppError('Amount paid is less than initiated amount', 400, 'AMOUNT_MISMATCH');
     }
@@ -242,87 +247,116 @@ async function verifyDeposit(userId, txRef, { flwId } = {}) {
 }
 
 async function requestWithdrawal(userId, amount, accountDetails) {
-  const walletRes = await query(
-    'SELECT username, email, wallet_balance FROM users WHERE id = $1',
-    [userId]
-  );
-  const user = walletRes.rows[0];
-  const balance = parseFloat(user.wallet_balance);
+  if (!accountDetails?.bank_code || !accountDetails?.account_number) {
+    throw new AppError('Bank account details are required', 400, 'INVALID_ACCOUNT');
+  }
+
   const withdrawalFee = parseFloat(process.env.WITHDRAWAL_FEE || '50');
-  
-  if (amount > balance) throw new AppError('Insufficient balance', 400, 'INSUFFICIENT_BALANCE');
-  if (amount <= withdrawalFee) throw new AppError(`Minimum withdrawal must be greater than the ${formatNaira(withdrawalFee)} fee`, 400, 'AMOUNT_TOO_LOW');
+  if (amount <= withdrawalFee) {
+    throw new AppError(`Minimum withdrawal must be greater than the ${formatNaira(withdrawalFee)} fee`, 400, 'AMOUNT_TOO_LOW');
+  }
 
   const transferAmount = amount - withdrawalFee;
-
+  const reference = `WD-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`;
   const client = await getClient();
+  let user;
+
   try {
     await client.query('BEGIN');
 
-    await client.query(
-      'UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2',
+    const walletRes = await client.query(
+      'SELECT username, email, wallet_balance, email_verified FROM users WHERE id = $1 FOR UPDATE',
+      [userId]
+    );
+    user = walletRes.rows[0];
+    if (!user) throw new AppError('User not found', 404, 'NOT_FOUND');
+    if (!user.email_verified) {
+      throw new AppError('Please verify your email before withdrawing', 403, 'EMAIL_NOT_VERIFIED');
+    }
+
+    const debit = await client.query(
+      `UPDATE users SET wallet_balance = wallet_balance - $1
+       WHERE id = $2 AND wallet_balance >= $1
+       RETURNING wallet_balance`,
       [amount, userId]
     );
-
-    const reference = `WD-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`;
-    
-    // Initiate Flutterwave Transfer
-    let flwTransferId = null;
-    try {
-      const flwRes = await axios.post(
-        'https://api.flutterwave.com/v3/transfers',
-        {
-          account_bank: accountDetails.bank_code || '044', // Default to Access Bank for testing if not provided
-          account_number: accountDetails.account_number,
-          amount: transferAmount,
-          narration: 'ThinkTrophy Withdrawal',
-          currency: 'NGN',
-          reference: reference,
-          callback_url: `${process.env.APP_URL}/api/payment/webhook`,
-          debit_currency: 'NGN'
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-          }
-        }
-      );
-      flwTransferId = flwRes.data.data.id;
-    } catch (flwErr) {
-      console.error('Flutterwave Transfer Error:', flwErr.response?.data || flwErr.message);
-      throw new AppError('Failed to initiate transfer with payment gateway', 500, 'GATEWAY_ERROR');
+    if (!debit.rowCount) {
+      throw new AppError('Insufficient balance', 400, 'INSUFFICIENT_BALANCE');
     }
 
     await client.query(
       `INSERT INTO transactions (user_id, type, amount, status, reference, metadata)
        VALUES ($1, 'withdrawal', $2, 'pending', $3, $4)`,
-      [userId, amount, reference, JSON.stringify({ ...accountDetails, flw_transfer_id: flwTransferId, fee: withdrawalFee, transfer_amount: transferAmount })]
+      [userId, amount, reference, JSON.stringify({
+        ...accountDetails,
+        fee: withdrawalFee,
+        transfer_amount: transferAmount,
+      })]
     );
 
     await client.query('COMMIT');
-    
-    // Sync Withdrawal Request to Zoho Books
-    const zohoService = require('./zohoService');
-    zohoService.syncWithdrawalRequest(userId, amount, withdrawalFee, reference)
-      .catch(err => console.error('Failed to sync withdrawal request to Zoho Books:', err));
-    
-    // Send email notification (non-blocking)
-    if (user && user.email) {
-      sendActionEmail(
-        user.email,
-        user.username,
-        'Withdrawal Request Received',
-        `Your withdrawal request for ₦${parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been submitted successfully and is currently being processed.`
-      ).catch(err => console.error('Failed to send withdrawal email:', err));
-    }
-
-    return { reference, amount, message: 'Withdrawal request submitted for processing' };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
   } finally {
     client.release();
   }
+
+  let flwTransferId = null;
+  try {
+    const flwRes = await axios.post(
+      'https://api.flutterwave.com/v3/transfers',
+      {
+        account_bank: accountDetails.bank_code,
+        account_number: accountDetails.account_number,
+        amount: transferAmount,
+        narration: 'ThinkTrophy Withdrawal',
+        currency: 'NGN',
+        reference,
+        callback_url: `${process.env.APP_URL}/api/payment/webhook`,
+        debit_currency: 'NGN',
+      },
+      {
+        headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` },
+      }
+    );
+    flwTransferId = flwRes.data?.data?.id || null;
+  } catch (flwErr) {
+    console.error('Flutterwave Transfer Error:', flwErr.response?.data || flwErr.message);
+    await query(
+      `UPDATE transactions SET status = 'failed', metadata = metadata || $1::jsonb WHERE reference = $2 AND type = 'withdrawal'`,
+      [JSON.stringify({ gateway_error: flwErr.response?.data || flwErr.message }), reference]
+    );
+    await query(
+      'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
+      [amount, userId]
+    );
+    throw new AppError('Failed to initiate transfer with payment gateway', 500, 'GATEWAY_ERROR');
+  }
+
+  if (flwTransferId) {
+    await query(
+      `UPDATE transactions
+       SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+       WHERE reference = $2 AND type = 'withdrawal'`,
+      [JSON.stringify({ flw_transfer_id: flwTransferId }), reference]
+    );
+  }
+
+  const zohoService = require('./zohoService');
+  zohoService.syncWithdrawalRequest(userId, amount, withdrawalFee, reference)
+    .catch(err => console.error('Failed to sync withdrawal request to Zoho Books:', err));
+
+  if (user && user.email) {
+    sendActionEmail(
+      user.email,
+      user.username,
+      'Withdrawal Request Received',
+      `Your withdrawal request for ₦${parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been submitted successfully and is currently being processed.`
+    ).catch(err => console.error('Failed to send withdrawal email:', err));
+  }
+
+  return { reference, amount, message: 'Withdrawal request submitted for processing' };
 }
 
 async function handleTransferCompleted(data) {
@@ -391,10 +425,18 @@ async function logWebhook(event, payload, status, errorMessage) {
   );
 }
 
+function signaturesMatch(provided, expected) {
+  if (!provided || !expected) return false;
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 // Webhook handler
 async function handleWebhook(payload, signature) {
   const secretHash = process.env.FLW_SECRET_HASH;
-  if (!secretHash || !signature || signature !== secretHash) {
+  if (!signaturesMatch(signature, secretHash)) {
     throw new AppError('Invalid webhook signature', 401, 'UNAUTHORIZED');
   }
 

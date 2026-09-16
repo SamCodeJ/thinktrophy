@@ -737,7 +737,8 @@ async function updateUserStatus(req, res, next) {
     const { is_active } = req.body;
     if (typeof is_active !== 'boolean') throw new AppError('is_active must be boolean', 400, 'INVALID_INPUT');
     const result = await query(
-      'UPDATE users SET is_active = $1 WHERE id = $2 RETURNING id, username, is_active',
+      `UPDATE users SET is_active = $1, refresh_token_hash = CASE WHEN $1 = FALSE THEN NULL ELSE refresh_token_hash END
+       WHERE id = $2 RETURNING id, username, is_active`,
       [is_active, id]
     );
     if (!result.rows[0]) throw new AppError('User not found', 404, 'NOT_FOUND');
@@ -759,9 +760,26 @@ async function updateUserStatus(req, res, next) {
 async function listGameSessions(req, res, next) {
   try {
     const { status, page = 1, limit = 50 } = req.query;
+    const search = String(req.query.search || '').trim();
     const params = [];
     const conditions = [];
     if (status) { params.push(status); conditions.push(`gs.status = $${params.length}`); }
+    if (search) {
+      params.push(`%${search}%`);
+      const i = params.length;
+      conditions.push(
+        `(gs.id::text ILIKE $${i}
+          OR REPLACE(gs.id::text, '-', '') ILIKE $${i}
+          OR u.username ILIKE $${i}
+          OR gs.status ILIKE $${i}
+          OR gs.stake_amount::text ILIKE $${i}
+          OR gs.payout_amount::text ILIKE $${i}
+          OR gs.score::text ILIKE $${i}
+          OR (EXTRACT(EPOCH FROM (gs.completed_at - gs.started_at))::int::text || 's') ILIKE $${i}
+          OR TO_CHAR(gs.started_at, 'Mon FMDD, HH24:MI') ILIKE $${i}
+          OR TO_CHAR(gs.started_at, 'YYYY-MM-DD') ILIKE $${i})`
+      );
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const offset = (parseInt(page) - 1) * parseInt(limit);
     params.push(parseInt(limit), offset);
@@ -776,7 +794,11 @@ async function listGameSessions(req, res, next) {
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
-    res.json({ success: true, data: result.rows });
+    const countRes = await query(
+      `SELECT COUNT(*) FROM game_sessions gs JOIN users u ON u.id = gs.user_id ${where}`,
+      params.slice(0, -2)
+    );
+    res.json({ success: true, data: result.rows, total: parseInt(countRes.rows[0].count) });
   } catch (err) { next(err); }
 }
 
@@ -807,6 +829,8 @@ async function getGameSessionDetail(req, res, next) {
     const gross = parseFloat(session.payout_amount) || 0;
     const tax = parseFloat(session.tax_amount) || 0;
     session.net_payout = Math.round((gross - tax) * 100) / 100;
+    delete session.session_token;
+    delete session.answer_option_maps;
     session.answer_review = answers.map((a, i) => {
       const q = questionsById[a.question_id] || {};
       return {
@@ -960,6 +984,10 @@ const PUBLIC_SETTING_KEYS = [
   'kiosk_mode', 'kiosk_warning_count', 'platform_name', 'platform_tagline',
   'user_win_tax_percentage', 'payout_perfect', 'payout_nine',
 ];
+const SUPER_ADMIN_SETTING_KEYS = [
+  'min_stake', 'max_stake', 'payout_perfect', 'payout_nine',
+  'referral_win_percentage', 'user_win_tax_percentage',
+];
 
 async function getPublicSettings(req, res, next) {
   try {
@@ -986,6 +1014,10 @@ async function getSettings(req, res, next) {
 async function updateSettings(req, res, next) {
   try {
     const updates = req.body;
+    const economyKeys = Object.keys(updates).filter(k => SUPER_ADMIN_SETTING_KEYS.includes(k));
+    if (economyKeys.length && req.admin.role !== 'super_admin') {
+      throw new AppError('Only a super admin can change payout, stake, or tax settings', 403, 'FORBIDDEN');
+    }
     for (const [key, value] of Object.entries(updates)) {
       await query(
         `INSERT INTO platform_settings (key, value, updated_at) VALUES ($1, $2, NOW())
@@ -1055,8 +1087,12 @@ async function createAdmin(req, res, next) {
     if (!name || !email || !password) {
       throw new AppError('Name, email, and password are required', 400, 'MISSING_FIELDS');
     }
+    const passwordOk = /[A-Z]/.test(password) && /[0-9]/.test(password) && password.length >= 8;
+    if (!passwordOk) {
+      throw new AppError('Password must be at least 8 characters and include an uppercase letter and a number', 400, 'WEAK_PASSWORD');
+    }
     const bcrypt = require('bcrypt');
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 12);
 
     const result = await query(
       'INSERT INTO admins (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',

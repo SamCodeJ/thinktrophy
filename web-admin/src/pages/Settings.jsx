@@ -9,6 +9,7 @@ export default function Settings() {
   const qc = useQueryClient();
   const { admin } = useAuth();
   const canEdit = admin?.role === 'super_admin' || admin?.role === 'moderator';
+  const canEditEconomy = admin?.role === 'super_admin';
 
   const { data, isLoading } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
   const [form, setForm] = useState({
@@ -37,19 +38,24 @@ export default function Settings() {
   }, [data]);
 
   const saveMut = useMutation({
-    mutationFn: () => updateSettings({
-      min_stake:           parseFloat(form.min_stake),
-      max_stake:           parseFloat(form.max_stake),
-      payout_perfect:      parseFloat(form.payout_perfect),
-      payout_nine:         parseFloat(form.payout_nine),
-      game_duration:       parseInt(form.game_duration, 10),
-      platform_name:       form.platform_name,
-      platform_tagline:    form.platform_tagline,
-      kiosk_mode:          form.kiosk_mode,
-      kiosk_warning_count: parseInt(form.kiosk_warning_count, 10),
-      referral_win_percentage: parseFloat(form.referral_win_percentage),
-      user_win_tax_percentage: parseFloat(form.user_win_tax_percentage),
-    }),
+    mutationFn: () => {
+      const payload = {
+        game_duration:       parseInt(form.game_duration, 10),
+        platform_name:       form.platform_name,
+        platform_tagline:    form.platform_tagline,
+        kiosk_mode:          form.kiosk_mode,
+        kiosk_warning_count: parseInt(form.kiosk_warning_count, 10),
+      };
+      if (canEditEconomy) {
+        payload.min_stake = parseFloat(form.min_stake);
+        payload.max_stake = parseFloat(form.max_stake);
+        payload.payout_perfect = parseFloat(form.payout_perfect);
+        payload.payout_nine = parseFloat(form.payout_nine);
+        payload.referral_win_percentage = parseFloat(form.referral_win_percentage);
+        payload.user_win_tax_percentage = parseFloat(form.user_win_tax_percentage);
+      }
+      return updateSettings(payload);
+    },
     onSuccess: () => { qc.invalidateQueries(['settings']); toast.success('Settings saved'); },
     onError: e => toast.error(e?.error?.message || 'Failed to save'),
   });
@@ -72,11 +78,11 @@ export default function Settings() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm text-white/60 mb-1.5">Minimum Stake (₦)</label>
-              <input className="input" type="number" min="0.01" step="0.01" value={form.min_stake} onChange={e => set('min_stake', e.target.value)} />
+              <input className="input" type="number" min="0.01" step="0.01" value={form.min_stake} onChange={e => set('min_stake', e.target.value)} disabled={!canEditEconomy} />
             </div>
             <div>
               <label className="block text-sm text-white/60 mb-1.5">Maximum Stake (₦)</label>
-              <input className="input" type="number" min="1" step="1" value={form.max_stake} onChange={e => set('max_stake', e.target.value)} />
+              <input className="input" type="number" min="1" step="1" value={form.max_stake} onChange={e => set('max_stake', e.target.value)} disabled={!canEditEconomy} />
             </div>
           </div>
         </div>
@@ -86,12 +92,12 @@ export default function Settings() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm text-white/60 mb-1.5">10/10 Perfect Score Multiplier</label>
-              <input className="input" type="number" min="0" step="0.1" value={form.payout_perfect} onChange={e => set('payout_perfect', e.target.value)} />
+              <input className="input" type="number" min="0" step="0.1" value={form.payout_perfect} onChange={e => set('payout_perfect', e.target.value)} disabled={!canEditEconomy} />
               <p className="text-xs text-white/30 mt-1">Player wins stake × {form.payout_perfect}</p>
             </div>
             <div>
               <label className="block text-sm text-white/60 mb-1.5">9/10 Score Multiplier</label>
-              <input className="input" type="number" min="0" step="0.1" value={form.payout_nine} onChange={e => set('payout_nine', e.target.value)} />
+              <input className="input" type="number" min="0" step="0.1" value={form.payout_nine} onChange={e => set('payout_nine', e.target.value)} disabled={!canEditEconomy} />
               <p className="text-xs text-white/30 mt-1">Player wins stake × {form.payout_nine}</p>
             </div>
           </div>
@@ -118,12 +124,12 @@ export default function Settings() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm text-white/60 mb-1.5">User Win Tax (UWT)</label>
-              <input className="input" type="number" min="0" step="0.01" max="1" value={form.user_win_tax_percentage} onChange={e => set('user_win_tax_percentage', e.target.value)} />
+              <input className="input" type="number" min="0" step="0.01" max="1" value={form.user_win_tax_percentage} onChange={e => set('user_win_tax_percentage', e.target.value)} disabled={!canEditEconomy} />
               <p className="text-xs text-white/30 mt-1">Percentage of winnings deducted as tax for 10/10 and 9/10 (e.g. 0.05 for 5%). The original stake is not taxed.</p>
             </div>
             <div>
               <label className="block text-sm text-white/60 mb-1.5">Referral Win Percentage</label>
-              <input className="input" type="number" min="0" step="0.01" max="1" value={form.referral_win_percentage} onChange={e => set('referral_win_percentage', e.target.value)} />
+              <input className="input" type="number" min="0" step="0.01" max="1" value={form.referral_win_percentage} onChange={e => set('referral_win_percentage', e.target.value)} disabled={!canEditEconomy} />
               <p className="text-xs text-white/30 mt-1">Percentage of a player's first profit that goes to their referrer (e.g., 0.10 for 10%)</p>
             </div>
           </div>
@@ -212,6 +218,11 @@ export default function Settings() {
           {!canEdit && (
             <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-400/10 px-3 py-2 rounded-lg border border-amber-400/20">
               <ShieldAlert size={14} /> You have viewer access only. Settings cannot be saved.
+            </div>
+          )}
+          {canEdit && !canEditEconomy && (
+            <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-400/10 px-3 py-2 rounded-lg border border-amber-400/20">
+              <ShieldAlert size={14} /> Stake, payout, and tax settings can only be changed by a super admin.
             </div>
           )}
           <button
