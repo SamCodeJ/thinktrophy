@@ -16,7 +16,7 @@ export default function Transactions() {
   });
 
   const verifyMut = useMutation({
-    mutationFn: (reference) => verifyDepositTransaction(reference),
+    mutationFn: (id) => verifyDepositTransaction(id),
     onSuccess: () => {
       toast.success('Deposit verified and wallet credited');
       qc.invalidateQueries({ queryKey: ['transactions'] });
@@ -50,18 +50,19 @@ export default function Transactions() {
       key: 'actions',
       header: '',
       sortable: false,
-      render: (_v, row) => (
-        row.type === 'deposit' && row.status === 'pending' && row.reference ? (
+      render: (_v, row) => {
+        const isThisRow = verifyMut.isPending && verifyMut.variables === row.id;
+        return row.type === 'deposit' && row.status === 'pending' && row.reference ? (
           <button
             type="button"
-            disabled={verifyMut.isPending}
-            onClick={() => verifyMut.mutate(row.reference)}
+            disabled={isThisRow}
+            onClick={() => verifyMut.mutate(row.id)}
             className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 disabled:opacity-50"
           >
-            {verifyMut.isPending ? 'Verifying…' : 'Verify'}
+            {isThisRow ? 'Verifying…' : 'Verify'}
           </button>
-        ) : null
-      ),
+        ) : null;
+      },
     },
   ];
 

@@ -40,8 +40,8 @@ export const getCategoryQuestions = (categoryId) =>
 
 // Transactions
 export const getTransactions = (params) => client.get('/api/admin/transactions', { params });
-export const verifyDepositTransaction = (reference) =>
-  client.post(`/api/admin/transactions/${encodeURIComponent(reference)}/verify`);
+export const verifyDepositTransaction = (id) =>
+  client.post(`/api/admin/transactions/${encodeURIComponent(id)}/verify`);
 
 // Users
 export const getUsers = (params) => client.get('/api/admin/users', { params });

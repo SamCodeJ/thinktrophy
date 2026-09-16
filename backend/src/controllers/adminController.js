@@ -647,13 +647,30 @@ async function listTransactions(req, res, next) {
 async function verifyPendingDeposit(req, res, next) {
   try {
     const { verifyDeposit } = require('../services/paymentService');
-    const reference = decodeURIComponent(req.params.reference);
-    const data = await verifyDeposit(null, reference);
+    const { id } = req.params;
+
+    const txRes = await query(
+      `SELECT id, user_id, type, status, reference
+       FROM transactions
+       WHERE id = $1`,
+      [id]
+    );
+    const tx = txRes.rows[0];
+    if (!tx) throw new AppError('Transaction not found', 404, 'NOT_FOUND');
+    if (tx.type !== 'deposit') {
+      throw new AppError('Only deposit transactions can be verified this way', 400, 'INVALID_TYPE');
+    }
+    if (!tx.reference) {
+      throw new AppError('Transaction has no payment reference', 400, 'MISSING_REFERENCE');
+    }
+
+    const data = await verifyDeposit(tx.user_id, tx.reference);
     await logAdminAction({
       adminId: req.admin.adminId,
       action: 'VERIFY_DEPOSIT',
       entity: 'transaction',
-      details: { reference, amount: data.amount },
+      entityId: tx.id,
+      details: { reference: tx.reference, amount: data.amount },
       ipAddress: req.ip
     });
     res.json({ success: true, data });
