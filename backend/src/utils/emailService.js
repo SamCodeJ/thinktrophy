@@ -1,5 +1,31 @@
 const nodemailer = require('nodemailer');
 
+const BRAND = {
+  blue:   '#0984E3',
+  teal:   '#00CEC9',
+  dark:   '#1E272E',
+  darker: '#151D23',
+  card:   '#232F38',
+  light:  '#F5F6FA',
+};
+
+function wrapEmail(innerHtml) {
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:${BRAND.card};border-radius:8px;overflow:hidden;">
+      <div style="background-color:${BRAND.blue};background-image:linear-gradient(135deg,${BRAND.blue},${BRAND.teal});padding:32px 24px;text-align:center;">
+        <h1 style="color:#ffffff;margin:0;font-size:28px;letter-spacing:1px;">ThinkTrophy</h1>
+      </div>
+      <div style="padding:32px 24px;background:${BRAND.light};">
+        ${innerHtml}
+      </div>
+    </div>
+  `;
+}
+
+function ctaStyle() {
+  return `background-color:${BRAND.blue};background-image:linear-gradient(135deg,${BRAND.blue},${BRAND.teal});color:#fff;padding:14px 32px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:16px;display:inline-block;`;
+}
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT || '587', 10),
@@ -22,30 +48,21 @@ async function sendVerificationEmail(to, username, token) {
       from: `"ThinkTrophy" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
       to,
       subject: 'Verify your ThinkTrophy account',
-      html: `
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f9f9f9;border-radius:8px;overflow:hidden;">
-          <div style="background:#1a1a2e;padding:32px 24px;text-align:center;">
-            <h1 style="color:#e94560;margin:0;font-size:28px;letter-spacing:1px;">ThinkTrophy</h1>
-          </div>
-          <div style="padding:32px 24px;">
-            <h2 style="color:#1a1a2e;margin-top:0;">Hi ${username}, welcome aboard!</h2>
+      html: wrapEmail(`
+            <h2 style="color:${BRAND.dark};margin-top:0;">Hi ${username}, welcome aboard!</h2>
             <p style="color:#555;line-height:1.6;">
               Thanks for registering. Click the button below to verify your email address and activate your account.
               This link expires in <strong>24 hours</strong>.
             </p>
             <div style="text-align:center;margin:32px 0;">
-              <a href="${verifyUrl}"
-                 style="background:#e94560;color:#fff;padding:14px 32px;border-radius:6px;
-                        text-decoration:none;font-weight:bold;font-size:16px;display:inline-block;">
+              <a href="${verifyUrl}" style="${ctaStyle()}">
                 Verify Email Address
               </a>
             </div>
             <p style="color:#888;font-size:13px;">
               If you didn't create an account, you can safely ignore this email.
             </p>
-          </div>
-        </div>
-      `,
+      `),
       text: `Hi ${username},\n\nVerify your ThinkTrophy account by visiting:\n${verifyUrl}\n\nThis link expires in 24 hours.\n\nIf you didn't create an account, ignore this email.`,
     });
     console.log(`Verification email sent to ${to}`);
@@ -63,20 +80,14 @@ async function sendPasswordResetEmail(to, name, otp) {
       from: `"ThinkTrophy" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
       to,
       subject: 'Reset your ThinkTrophy password',
-      html: `
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f9f9f9;border-radius:8px;overflow:hidden;">
-          <div style="background:#1a1a2e;padding:32px 24px;text-align:center;">
-            <h1 style="color:#e94560;margin:0;font-size:28px;letter-spacing:1px;">ThinkTrophy</h1>
-          </div>
-          <div style="padding:32px 24px;">
-            <h2 style="color:#1a1a2e;margin-top:0;">Hi ${name},</h2>
+      html: wrapEmail(`
+            <h2 style="color:${BRAND.dark};margin-top:0;">Hi ${name},</h2>
             <p style="color:#555;line-height:1.6;">
               We received a request to reset the password for your ThinkTrophy account.
               Enter the following 6-digit code to reset your password:
             </p>
             <div style="text-align:center;margin:32px 0;">
-              <span style="background:#e94560;color:#fff;padding:14px 32px;border-radius:6px;
-                           font-weight:bold;font-size:24px;letter-spacing:4px;display:inline-block;">
+              <span style="${ctaStyle()}font-size:24px;letter-spacing:4px;">
                 ${otp}
               </span>
             </div>
@@ -86,9 +97,7 @@ async function sendPasswordResetEmail(to, name, otp) {
             <p style="color:#888;font-size:13px;">
               If you didn't request a password reset, you can safely ignore this email.
             </p>
-          </div>
-        </div>
-      `,
+      `),
       text: `Hi ${name},\n\nYour password reset code is: ${otp}\n\nThis code expires in 15 minutes.\n\nIf you didn't request this, please ignore this email.`,
     });
     console.log(`Password reset email sent to ${to}`);
@@ -106,22 +115,15 @@ async function sendActionEmail(to, name, subject, message) {
       from: `"ThinkTrophy" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
       to,
       subject,
-      html: `
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f9f9f9;border-radius:8px;overflow:hidden;">
-          <div style="background:#1a1a2e;padding:32px 24px;text-align:center;">
-            <h1 style="color:#e94560;margin:0;font-size:28px;letter-spacing:1px;">ThinkTrophy</h1>
-          </div>
-          <div style="padding:32px 24px;">
-            <h2 style="color:#1a1a2e;margin-top:0;">Hi ${name},</h2>
+      html: wrapEmail(`
+            <h2 style="color:${BRAND.dark};margin-top:0;">Hi ${name},</h2>
             <p style="color:#555;line-height:1.6;font-size:16px;">
               ${message}
             </p>
             <p style="color:#888;font-size:13px;margin-top:32px;">
               If you did not authorize this action, please contact support immediately.
             </p>
-          </div>
-        </div>
-      `,
+      `),
       text: `Hi ${name},\n\n${message}\n\nIf you did not authorize this action, please contact support immediately.`,
     });
     console.log(`Action email '${subject}' sent to ${to}`);
