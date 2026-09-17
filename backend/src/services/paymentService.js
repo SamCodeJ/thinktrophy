@@ -9,18 +9,76 @@ const crypto = require('crypto');
 
 
 async function initiateDeposit(userId, amount) {
-  const reference = `TT-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`;
+  const depositAmount = roundMoney(amount);
+  if (!Number.isFinite(depositAmount) || depositAmount < 1) {
+    throw new AppError('Invalid deposit amount', 400, 'INVALID_AMOUNT');
+  }
+  if (!process.env.FLW_SECRET_KEY) {
+    throw new AppError('Payment gateway is not configured', 500, 'GATEWAY_ERROR');
+  }
 
-  await query(
-    `INSERT INTO transactions (user_id, type, amount, status, reference)
-     VALUES ($1, 'deposit', $2, 'pending', $3)`,
-    [userId, amount, reference]
+  const userRes = await query(
+    'SELECT username, email, first_name, last_name, phone_number FROM users WHERE id = $1',
+    [userId]
   );
+  const user = userRes.rows[0];
+  if (!user) throw new AppError('User not found', 404, 'NOT_FOUND');
+
+  const reference = `TT-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`;
+  const customerName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username;
+
+  const txInsert = await query(
+    `INSERT INTO transactions (user_id, type, amount, status, reference, metadata)
+     VALUES ($1, 'deposit', $2, 'pending', $3, $4)
+     RETURNING id`,
+    [userId, depositAmount, reference, JSON.stringify({ initiated_amount: depositAmount })]
+  );
+
+  let paymentLink;
+  try {
+    const flwRes = await axios.post(
+      'https://api.flutterwave.com/v3/payments',
+      {
+        tx_ref: reference,
+        amount: depositAmount,
+        currency: 'NGN',
+        redirect_url: 'https://flutterwave.com/rn-redirect',
+        payment_options: 'card,ussd,banktransfer',
+        customer: {
+          email: user.email,
+          name: customerName,
+          phonenumber: user.phone_number || undefined,
+        },
+        customizations: {
+          title: 'ThinkTrophy',
+          description: `Wallet deposit ${formatNaira(depositAmount)}`,
+        },
+        meta: {
+          user_id: userId,
+          initiated_amount: depositAmount,
+        },
+      },
+      {
+        headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` },
+      }
+    );
+    paymentLink = flwRes.data?.data?.link;
+    if (!paymentLink) {
+      throw new Error(flwRes.data?.message || 'No payment link returned');
+    }
+  } catch (err) {
+    console.error('Flutterwave payment init error:', err.response?.data || err.message);
+    await query(
+      `UPDATE transactions SET status = 'failed', metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2`,
+      [JSON.stringify({ gateway_error: err.response?.data || err.message }), txInsert.rows[0].id]
+    );
+    throw new AppError('Failed to initialize payment. Please try again.', 502, 'GATEWAY_ERROR');
+  }
 
   return {
     reference,
-    amount,
-    message: 'Payment initiated. Use reference to verify after payment.',
+    amount: depositAmount,
+    payment_link: paymentLink,
   };
 }
 
@@ -118,6 +176,18 @@ async function fetchFlutterwaveTransaction({ txRef, flwId, createdAt }) {
   );
 }
 
+function roundMoney(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+}
+
+function parseTxMetadata(metadata) {
+  if (!metadata) return {};
+  if (typeof metadata === 'string') {
+    try { return JSON.parse(metadata); } catch { return {}; }
+  }
+  return { ...metadata };
+}
+
 function notifyDepositSuccess(user, amount) {
   if (!user?.email) return;
   sendActionEmail(
@@ -128,7 +198,18 @@ function notifyDepositSuccess(user, amount) {
   ).catch(err => console.error('Failed to send deposit email:', err));
 }
 
+function depositResult({ amount, credited = 0, newBalance, reference }) {
+  return {
+    amount: roundMoney(amount),
+    credited: roundMoney(credited),
+    newBalance: roundMoney(newBalance),
+    reference,
+  };
+}
+
 // userId is optional (admin / webhook). Always re-checks Flutterwave before crediting.
+// Credits the Flutterwave paid amount. If an earlier verify credited only the initiated
+// amount, a later verify tops up the shortfall.
 async function verifyDeposit(userId, txRef, { flwId } = {}) {
   const peekRes = userId
     ? await query(
@@ -144,18 +225,6 @@ async function verifyDeposit(userId, txRef, { flwId } = {}) {
   const peekTx = peekRes.rows[0];
   if (!peekTx) throw new AppError('Transaction not found', 404, 'NOT_FOUND');
 
-  if (peekTx.status === 'verified') {
-    const walletRes = await query(
-      'SELECT wallet_balance FROM users WHERE id = $1',
-      [peekTx.user_id]
-    );
-    return {
-      amount:     parseFloat(peekTx.amount),
-      newBalance: parseFloat(walletRes.rows[0].wallet_balance),
-      reference:  peekTx.reference,
-    };
-  }
-
   const flwData = await fetchFlutterwaveTransaction({
     txRef,
     flwId,
@@ -167,6 +236,15 @@ async function verifyDeposit(userId, txRef, { flwId } = {}) {
   }
   if (flwData.tx_ref && flwData.tx_ref !== txRef && !flwId) {
     throw new AppError('Payment reference mismatch', 400, 'REFERENCE_MISMATCH');
+  }
+
+  const paidAmount = roundMoney(flwData.amount);
+  if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
+    throw new AppError('Invalid amount returned by Flutterwave', 400, 'AMOUNT_MISMATCH');
+  }
+  const currency = String(flwData.currency || '').toUpperCase();
+  if (currency && currency !== 'NGN') {
+    throw new AppError('Payment currency mismatch', 400, 'CURRENCY_MISMATCH');
   }
 
   const client = await getClient();
@@ -186,38 +264,59 @@ async function verifyDeposit(userId, txRef, { flwId } = {}) {
     if (!tx) throw new AppError('Transaction not found', 404, 'NOT_FOUND');
 
     const ownerId = tx.user_id;
+    if (tx.status === 'reversed' || tx.status === 'failed') {
+      throw new AppError('Transaction cannot be credited in its current status', 400, 'INVALID_STATUS');
+    }
 
-    if (tx.status === 'verified') {
+    const recordedAmount = roundMoney(tx.amount);
+    const meta = parseTxMetadata(tx.metadata);
+    const initiatedAmount = roundMoney(meta.initiated_amount ?? recordedAmount);
+
+    if (tx.status === 'verified' && paidAmount <= recordedAmount) {
       const walletRes = await client.query(
         'SELECT wallet_balance FROM users WHERE id = $1',
         [ownerId]
       );
       await client.query('COMMIT');
-      return {
-        amount:     parseFloat(tx.amount),
-        newBalance: parseFloat(walletRes.rows[0].wallet_balance),
-        reference:  tx.reference,
-      };
+      return depositResult({
+        amount: recordedAmount,
+        credited: 0,
+        newBalance: walletRes.rows[0].wallet_balance,
+        reference: tx.reference,
+      });
     }
 
-    const paidAmount = parseFloat(flwData.amount);
-    const expectedAmount = parseFloat(tx.amount);
-    const currency = String(flwData.currency || '').toUpperCase();
-    if (currency && currency !== 'NGN') {
-      throw new AppError('Payment currency mismatch', 400, 'CURRENCY_MISMATCH');
-    }
-    if (paidAmount < expectedAmount) {
+    if (tx.status !== 'verified' && paidAmount < initiatedAmount) {
       throw new AppError('Amount paid is less than initiated amount', 400, 'AMOUNT_MISMATCH');
     }
 
+    if (paidAmount !== initiatedAmount) {
+      console.warn(
+        `Deposit amount mismatch tx_ref=${txRef} initiated=${initiatedAmount} flutterwave=${paidAmount}`
+      );
+    }
+
+    const creditAmount = tx.status === 'verified'
+      ? roundMoney(paidAmount - recordedAmount)
+      : paidAmount;
+
+    const nextMeta = {
+      ...meta,
+      flw_id: flwData.id,
+      flw_ref: flwData.flw_ref,
+      initiated_amount: initiatedAmount,
+      flw_amount: paidAmount,
+      amount_mismatch: paidAmount !== initiatedAmount,
+    };
+
     await client.query(
-      `UPDATE transactions SET status = 'verified', metadata = $1 WHERE id = $2`,
-      [JSON.stringify({ flw_id: flwData.id, flw_ref: flwData.flw_ref }), tx.id]
+      `UPDATE transactions SET status = 'verified', amount = $1, metadata = $2 WHERE id = $3`,
+      [paidAmount, JSON.stringify(nextMeta), tx.id]
     );
 
     await client.query(
       `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
-      [tx.amount, ownerId]
+      [creditAmount, ownerId]
     );
 
     const walletRes = await client.query(
@@ -228,16 +327,18 @@ async function verifyDeposit(userId, txRef, { flwId } = {}) {
     await client.query('COMMIT');
 
     const zohoService = require('./zohoService');
-    zohoService.syncDeposit(ownerId, tx.amount, tx.reference)
+    const zohoRef = tx.status === 'verified' ? `${tx.reference}-ADJ` : tx.reference;
+    zohoService.syncDeposit(ownerId, creditAmount, zohoRef)
       .catch(err => console.error('Failed to sync deposit to Zoho Books:', err));
 
-    notifyDepositSuccess(walletRes.rows[0], tx.amount);
+    notifyDepositSuccess(walletRes.rows[0], creditAmount);
 
-    return {
-      amount:     parseFloat(tx.amount),
-      newBalance: parseFloat(walletRes.rows[0].wallet_balance),
-      reference:  tx.reference,
-    };
+    return depositResult({
+      amount: paidAmount,
+      credited: creditAmount,
+      newBalance: walletRes.rows[0].wallet_balance,
+      reference: tx.reference,
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

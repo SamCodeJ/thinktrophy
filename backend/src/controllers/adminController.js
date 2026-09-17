@@ -672,7 +672,7 @@ async function verifyPendingDeposit(req, res, next) {
       action: 'VERIFY_DEPOSIT',
       entity: 'transaction',
       entityId: tx.id,
-      details: { reference: tx.reference, amount: data.amount },
+      details: { reference: tx.reference, amount: data.amount, credited: data.credited },
       ipAddress: req.ip
     });
     res.json({ success: true, data });

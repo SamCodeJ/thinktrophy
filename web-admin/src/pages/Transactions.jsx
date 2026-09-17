@@ -17,8 +17,13 @@ export default function Transactions() {
 
   const verifyMut = useMutation({
     mutationFn: ({ id, flwId }) => verifyDepositTransaction(id, flwId),
-    onSuccess: () => {
-      toast.success('Deposit verified and wallet credited');
+    onSuccess: (res) => {
+      const credited = parseFloat(res?.data?.credited);
+      toast.success(
+        Number.isFinite(credited) && credited > 0
+          ? `Wallet credited ${fmt(credited)}`
+          : 'Deposit already matches Flutterwave'
+      );
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
     },
@@ -62,16 +67,24 @@ export default function Transactions() {
       sortable: false,
       render: (_v, row) => {
         const isThisRow = verifyMut.isPending && verifyMut.variables?.id === row.id;
-        return row.type === 'deposit' && row.status === 'pending' && row.reference ? (
+        const canReconcile = row.type === 'deposit' && row.reference &&
+          (row.status === 'pending' || row.status === 'verified');
+        if (!canReconcile) return null;
+        const isPending = row.status === 'pending';
+        return (
           <button
             type="button"
             disabled={isThisRow}
             onClick={() => verifyMut.mutate({ id: row.id })}
-            className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 disabled:opacity-50"
+            className={`text-xs font-semibold px-2.5 py-1 rounded-lg disabled:opacity-50 ${
+              isPending
+                ? 'bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30'
+                : 'bg-white/10 text-white/70 hover:bg-white/20'
+            }`}
           >
-            {isThisRow ? 'Verifying…' : 'Verify'}
+            {isThisRow ? 'Verifying…' : isPending ? 'Verify' : 'Reconcile'}
           </button>
-        ) : null;
+        );
       },
     },
   ];

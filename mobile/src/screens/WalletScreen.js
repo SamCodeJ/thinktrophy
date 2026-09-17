@@ -10,7 +10,6 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
-import { FlutterwaveInit } from 'flutterwave-react-native';
 import { WebView } from 'react-native-webview';
 import { colors } from '../utils/theme';
 import { getWallet, getProfile, deposit, verifyPayment, withdraw, getBanks, resolveAccount } from '../api';
@@ -105,7 +104,7 @@ export default function WalletScreen() {
   );
 
   const { data: walletData, isLoading } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
-  const { data: profileData } = useQuery({ queryKey: ['profile'], queryFn: getProfile });
+  useQuery({ queryKey: ['profile'], queryFn: getProfile });
   const { data: banksData, isLoading: loadingBanks } = useQuery({ queryKey: ['banks'], queryFn: getBanks });
 
   const [depositModal, setDepositModal]   = useState(false);
@@ -120,8 +119,6 @@ export default function WalletScreen() {
 
   const balance      = walletData?.data?.balance || 0;
   const transactions = walletData?.data?.transactions || [];
-  const userEmail    = profileData?.data?.email || 'user@example.com';
-  const userName     = profileData?.data?.username || 'User';
   const banks        = (banksData?.data || []).slice().sort((a, b) => a.name.localeCompare(b.name));
   const bankQuery    = bankSearch.trim().toLowerCase();
   const filteredBanks = bankQuery
@@ -136,34 +133,16 @@ export default function WalletScreen() {
 
   const depositMut = useMutation({
     mutationFn: () => deposit({ amount: parseFloat(depositAmount) }),
-    onSuccess: async (res) => {
-      const ref = res.data.reference;
-      setPaymentRef(ref);
-      setDepositModal(false);
-      
-      try {
-        const flwPublicKey = process.env.EXPO_PUBLIC_FLW_PUBLIC_KEY;
-        if (!flwPublicKey) {
-          Alert.alert('Error', 'Payment is not configured. Missing Flutterwave public key.');
-          return;
-        }
-        const link = await FlutterwaveInit({
-          tx_ref: ref,
-          authorization: flwPublicKey,
-          customer: {
-            email: userEmail,
-            name: userName
-          },
-          amount: parseFloat(depositAmount),
-          currency: 'NGN',
-          payment_options: 'card,ussd,banktransfer',
-          redirect_url: 'https://flutterwave.com/rn-redirect'
-        });
-        setPaymentLink(link);
-      } catch (err) {
-        console.error('FlutterwaveInit error:', err);
+    onSuccess: (res) => {
+      const ref = res.data?.reference;
+      const link = res.data?.payment_link;
+      if (!ref || !link) {
         Alert.alert('Error', 'Failed to initialize payment. Please try again.');
+        return;
       }
+      setPaymentRef(ref);
+      setPaymentLink(link);
+      setDepositModal(false);
     },
     onError: e => Alert.alert('Error', e?.error?.message || 'Deposit failed'),
   });
@@ -178,12 +157,12 @@ export default function WalletScreen() {
     let lastError = null;
     for (let i = 0; i < 3; i++) {
       try {
-        await verifyPayment(txRef);
+        const verified = await verifyPayment(txRef);
         qc.invalidateQueries({ queryKey: ['wallet'] });
         qc.invalidateQueries({ queryKey: ['profile'] });
         setDepositAmount('');
         setPaymentRef(null);
-        Alert.alert('Success', `${fmt(parseFloat(depositAmount) || 0)} credited to your wallet!`);
+        Alert.alert('Success', `${fmt(verified?.data?.amount)} credited to your wallet!`);
         verifyingRef.current = false;
         return;
       } catch (e) {
