@@ -205,19 +205,23 @@ CREATE TABLE IF NOT EXISTS user_seen_questions (
 CREATE INDEX IF NOT EXISTS idx_user_seen_questions_user ON user_seen_questions(user_id);
 
 INSERT INTO user_seen_questions (user_id, question_id)
-SELECT DISTINCT gs.user_id, (ans->>'question_id')::uuid
+SELECT DISTINCT gs.user_id, q.id
 FROM game_sessions gs
 CROSS JOIN LATERAL jsonb_array_elements(COALESCE(gs.answers_submitted, '[]'::jsonb)) ans
+JOIN questions q ON q.id = (ans->>'question_id')::uuid
+JOIN users u ON u.id = gs.user_id
 WHERE ans->>'question_id' IS NOT NULL
 ON CONFLICT DO NOTHING;
 
 -- Also mark questions that were shown (including expired games with no answer yet)
 INSERT INTO user_seen_questions (user_id, question_id)
-SELECT DISTINCT gs.user_id, qid
+SELECT DISTINCT gs.user_id, q.id
 FROM game_sessions gs
 CROSS JOIN LATERAL unnest(
   CASE WHEN gs.active_track = 'a' THEN gs.question_ids_track_a ELSE gs.question_ids_track_b END
 ) WITH ORDINALITY AS t(qid, ord)
+JOIN questions q ON q.id = qid
+JOIN users u ON u.id = gs.user_id
 WHERE qid IS NOT NULL
   AND ord <= LEAST(GREATEST(COALESCE(gs.current_question_index, 0) + 1, 1), 10)
 ON CONFLICT DO NOTHING;
