@@ -40,7 +40,7 @@ export default function LoginScreen({ navigation, route }) {
 
   async function handleLogin() {
     if (!form.email || !form.password) {
-      Alert.alert('Missing fields', 'Please enter your email and password.');
+      Alert.alert('Missing fields', 'Please enter your username or email and password.');
       return;
     }
     setLoading(true);
@@ -114,16 +114,18 @@ export default function LoginScreen({ navigation, route }) {
               <Text style={styles.cardTitle}>Welcome back</Text>
 
               <View style={styles.field}>
-                <Text style={styles.label}>Email</Text>
+                <Text style={styles.label}>Username or email</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="you@example.com"
+                  placeholder="username or you@example.com"
                   placeholderTextColor={colors.white30}
                   value={form.email}
                   onChangeText={v => setForm(f => ({ ...f, email: v.trim() }))}
-                  keyboardType="email-address"
                   autoCapitalize="none"
-                  autoComplete="email"
+                  autoCorrect={false}
+                  autoComplete="username"
+                  textContentType="username"
+                  keyboardType="email-address"
                 />
               </View>
 

@@ -15,6 +15,12 @@ import { colors } from '../utils/theme';
 import { getWallet, getProfile, deposit, verifyPayment, withdraw, getBanks, resolveAccount } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const WITHDRAWAL_FEE = 50;
+
+function parseWithdrawAmount(raw) {
+  const n = parseFloat(String(raw || '').replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : NaN;
+}
 
 // RN Modal is a separate Android window. Expo Go often resizes with the keyboard;
 // production edge-to-edge builds usually do not, so the keypad covers the sheet.
@@ -86,7 +92,7 @@ function TxRow({ tx }) {
   );
 }
 
-export default function WalletScreen() {
+export default function WalletScreen({ navigation, route }) {
   const qc = useQueryClient();
   const insets = useSafeAreaInsets();
   const kbOverlap = useKeyboardOverlap();
@@ -110,6 +116,16 @@ export default function WalletScreen() {
   const [depositModal, setDepositModal]   = useState(false);
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [depositAmount, setDepositAmount] = useState('');
+
+  useEffect(() => {
+    if (!route.params?.openDeposit) return;
+    const suggested = parseFloat(route.params.suggestedAmount);
+    if (Number.isFinite(suggested) && suggested > 0) {
+      setDepositAmount(String(Math.ceil(suggested)));
+    }
+    setDepositModal(true);
+    navigation.setParams({ openDeposit: false, suggestedAmount: undefined });
+  }, [route.params?.openDeposit, route.params?.suggestedAmount, navigation]);
   const [withdrawForm, setWithdrawForm]   = useState({ amount: '', account_number: '', account_name: '', bank_code: '', bank_name: '' });
   const [bankModal, setBankModal]         = useState(false);
   const [bankSearch, setBankSearch]       = useState('');
@@ -231,9 +247,19 @@ export default function WalletScreen() {
     }
   }, [withdrawForm.account_number, withdrawForm.bank_code]);
 
+  const withdrawAmount = parseWithdrawAmount(withdrawForm.amount);
+  const withdrawReady = Boolean(
+    Number.isFinite(withdrawAmount)
+    && withdrawAmount > WITHDRAWAL_FEE
+    && withdrawAmount <= balance
+    && withdrawForm.account_number.length === 10
+    && withdrawForm.account_name
+    && withdrawForm.bank_code
+  );
+
   const withdrawMut = useMutation({
     mutationFn: () => withdraw({
-      amount: parseFloat(withdrawForm.amount),
+      amount: withdrawAmount,
       account_details: {
         type: 'bank',
         account_number: withdrawForm.account_number,
@@ -245,9 +271,20 @@ export default function WalletScreen() {
       qc.invalidateQueries({ queryKey: ['wallet'] });
       setWithdrawModal(false);
       setWithdrawForm({ amount: '', account_number: '', account_name: '', bank_code: '', bank_name: '' });
-      Alert.alert('Success', 'Withdrawal request submitted!');
+      Alert.alert(
+        'Withdrawal submitted',
+        'Your request is being processed. Check Transaction History for status. The amount will leave your wallet now and arrive in your bank when the transfer completes.'
+      );
     },
-    onError: e => Alert.alert('Error', e?.error?.message || 'Withdrawal failed'),
+    onError: e => {
+      const timedOut = e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '');
+      Alert.alert(
+        'Error',
+        timedOut
+          ? 'The request is taking longer than expected. Check Transaction History before trying again — a pending withdrawal may already be processing.'
+          : (e?.error?.message || 'Withdrawal failed')
+      );
+    },
   });
 
   if (paymentLink) {
@@ -395,8 +432,11 @@ export default function WalletScreen() {
                   placeholderTextColor={colors.white30}
                   keyboardType="decimal-pad"
                   value={withdrawForm.amount}
-                  onChangeText={v => setWithdrawForm(x => ({ ...x, amount: v }))}
+                  onChangeText={v => setWithdrawForm(x => ({ ...x, amount: v.replace(/,/g, '') }))}
                 />
+                <Text style={{ color: colors.white50, fontSize: 12, marginTop: 6 }}>
+                  A {fmt(WITHDRAWAL_FEE)} processing fee is deducted. You must withdraw more than {fmt(WITHDRAWAL_FEE)}.
+                </Text>
               </View>
 
               <View style={{ marginBottom: 12 }}>
@@ -427,10 +467,10 @@ export default function WalletScreen() {
 
               <TouchableOpacity 
                 onPress={() => withdrawMut.mutate()} 
-                disabled={withdrawMut.isPending || !withdrawForm.amount || !withdrawForm.account_number || !withdrawForm.account_name || !withdrawForm.bank_code} 
+                disabled={withdrawMut.isPending || !withdrawReady} 
                 activeOpacity={0.85}
               >
-                <LinearGradient colors={[colors.blue, colors.teal]} style={[styles.modalBtn, (!withdrawForm.amount || !withdrawForm.account_number || !withdrawForm.account_name || !withdrawForm.bank_code) && { opacity: 0.5 }]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                <LinearGradient colors={[colors.blue, colors.teal]} style={[styles.modalBtn, !withdrawReady && { opacity: 0.5 }]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                   {withdrawMut.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>Request Withdrawal</Text>}
                 </LinearGradient>
               </TouchableOpacity>

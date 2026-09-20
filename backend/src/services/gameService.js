@@ -4,12 +4,16 @@ const { signSessionToken, verifySessionToken } = require('../utils/jwt');
 const { AppError } = require('../middleware/errorHandler');
 const { sendActionEmail } = require('../utils/emailService');
 const { formatNaira } = require('../utils/formatNaira');
+const cache = require('../utils/cache');
 
 async function getPlatformSettings() {
+  const cached = await cache.get('platform_settings');
+  if (cached) return cached;
+
   const result = await query('SELECT key, value FROM platform_settings');
   const s = {};
   for (const row of result.rows) s[row.key] = row.value;
-  return {
+  const settings = {
     minStake:      parseFloat(s.min_stake      || '500.00'),
     maxStake:      parseFloat(s.max_stake      || '5000.00'),
     payoutPerfect: parseFloat(s.payout_perfect || '2.0'),
@@ -18,6 +22,8 @@ async function getPlatformSettings() {
     referralWinPercentage: parseFloat(s.referral_win_percentage || '0.10'),
     userWinTaxPercentage: parseFloat(s.user_win_tax_percentage || '0.05'),
   };
+  await cache.set('platform_settings', settings, 30 * 1000);
+  return settings;
 }
 
 // ─── Create a new game session ──────────────────────────────────────────────
@@ -28,6 +34,35 @@ async function createSession(userId, categoryIds, stakeAmount) {
     throw new AppError(`Minimum stake is ${formatNaira(settings.minStake)}`, 400, 'STAKE_TOO_LOW');
   if (stakeAmount > settings.maxStake)
     throw new AppError(`Maximum stake is ${formatNaira(settings.maxStake)}`, 400, 'STAKE_TOO_HIGH');
+
+  const precheck = await query(
+    'SELECT username, email, wallet_balance, email_verified FROM users WHERE id = $1',
+    [userId]
+  );
+  if (!precheck.rows[0])
+    throw new AppError('User not found', 404, 'NOT_FOUND');
+  if (!precheck.rows[0].email_verified)
+    throw new AppError('Please verify your email before playing', 403, 'EMAIL_NOT_VERIFIED');
+  if (parseFloat(precheck.rows[0].wallet_balance) < stakeAmount)
+    throw new AppError('Insufficient wallet balance', 400, 'INSUFFICIENT_BALANCE');
+
+  const availability = await getCategoriesForUser(userId);
+  const byId = new Map(availability.map(c => [c.id, c]));
+  for (const id of categoryIds) {
+    const cat = byId.get(id);
+    if (!cat || cat.exhausted) {
+      throw new AppError(
+        cat
+          ? `"${cat.name}" has no remaining questions. Please pick another category.`
+          : 'Invalid category selected.',
+        400,
+        'CATEGORY_EXHAUSTED'
+      );
+    }
+  }
+
+  // Build questions outside the wallet lock so other players are not blocked.
+  const { trackA, trackB, answerMaps } = await buildSessionQuestions(categoryIds, userId);
 
   const client = await getClient();
   try {
@@ -62,24 +97,6 @@ async function createSession(userId, categoryIds, stakeAmount) {
     );
     if (existing.rows.length > 0)
       throw new AppError('You already have an active game session', 409, 'SESSION_ACTIVE');
-
-    const availability = await getCategoriesForUser(userId);
-    const byId = new Map(availability.map(c => [c.id, c]));
-    for (const id of categoryIds) {
-      const cat = byId.get(id);
-      if (!cat || cat.exhausted) {
-        throw new AppError(
-          cat
-            ? `"${cat.name}" has no remaining questions. Please pick another category.`
-            : 'Invalid category selected.',
-          400,
-          'CATEGORY_EXHAUSTED'
-        );
-      }
-    }
-
-    // Build questions — skip any this user has already seen
-    const { trackA, trackB, answerMaps } = await buildSessionQuestions(categoryIds, userId);
 
     // Deduct stake atomically
     const debit = await client.query(
@@ -229,8 +246,11 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
     if (!submittedKey) throw new AppError('Invalid answer option', 400, 'INVALID_ANSWER');
 
     // Check correctness
-    const question = await getQuestionById(questionId);
-    const isCorrect = submittedKey === question.correct_option;
+    const question = await client.query(
+      'SELECT id, correct_option FROM questions WHERE id = $1',
+      [questionId]
+    );
+    const isCorrect = submittedKey === question.rows[0]?.correct_option;
 
     // Record answer
     const answersSubmitted = session.answers_submitted || [];
@@ -346,13 +366,16 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
       );
 
       // Increment question stats
-      for (const ans of answersSubmitted) {
+      const servedIds = answersSubmitted.map(a => a.question_id);
+      const correctIds = answersSubmitted.filter(a => a.is_correct).map(a => a.question_id);
+      if (servedIds.length) {
         await client.query(
           `UPDATE questions
            SET times_served = times_served + 1,
-               times_answered_correctly = times_answered_correctly + $1
-           WHERE id = $2`,
-          [ans.is_correct ? 1 : 0, ans.question_id]
+               times_answered_correctly = times_answered_correctly
+                 + CASE WHEN id = ANY($2::uuid[]) THEN 1 ELSE 0 END
+           WHERE id = ANY($1::uuid[])`,
+          [servedIds, correctIds]
         );
       }
 

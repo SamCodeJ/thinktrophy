@@ -12,7 +12,7 @@ const API_URL = 'https://api.thinktrophy.com/api';
 const client = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 15000,
+  timeout: 25000,
 });
 
 client.interceptors.request.use(async config => {

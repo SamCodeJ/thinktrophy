@@ -22,6 +22,7 @@ const linking = {
         }
       },
       CategorySelection: 'categories',
+      GamePrep: 'prep',
       Game: 'game/:id',
       Result: 'result/:id',
       GameHistory: 'history',
@@ -66,6 +67,7 @@ import { colors } from '../utils/theme';
 
 import AuthNavigator from './AuthNavigator';
 import MainNavigator from './MainNavigator';
+import GamePrepScreen from '../screens/GamePrepScreen';
 import GameScreen from '../screens/GameScreen';
 import ResultScreen from '../screens/ResultScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
@@ -94,6 +96,8 @@ export default function AppNavigator() {
             <Root.Screen name="Main"              component={MainNavigator} />
             <Root.Screen name="CategorySelection" component={CategorySelectionScreen}
               options={{ animation: 'slide_from_bottom' }} />
+            <Root.Screen name="GamePrep"          component={GamePrepScreen}
+              options={{ animation: 'slide_from_right', gestureEnabled: false }} />
             <Root.Screen name="Game"              component={GameScreen}
               options={{ animation: 'fade', gestureEnabled: false }} />
             <Root.Screen name="Result"            component={ResultScreen}

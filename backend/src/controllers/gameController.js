@@ -50,31 +50,37 @@ async function getResult(req, res, next) {
       10
     );
     const questionIds = (allQuestionIds || []).slice(0, shownCount);
-    const revealAnswers = session.status === 'completed';
-
+    // Session is already finished (getSessionResult rejects active games).
+    // Always reveal the official answer so review/transcript can show misses.
     const answersMap = {};
     (session.answers_submitted || []).forEach(a => { answersMap[a.question_id] = a; });
 
     const questionReview = [];
-    for (const qid of questionIds) {
+    if (questionIds.length) {
       const qRes = await query(
         `SELECT id, question_text, option_a, option_b, option_c, option_d, correct_option, difficulty
-         FROM questions WHERE id = $1`,
-        [qid]
+         FROM questions WHERE id = ANY($1::uuid[])`,
+        [questionIds]
       );
-      const q = qRes.rows[0];
-      const ans = answersMap[qid];
-      if (q) {
-        questionReview.push({
-          question_id:    q.id,
-          question_text:  q.question_text,
-          options:        { a: q.option_a, b: q.option_b, c: q.option_c, d: q.option_d },
-          correct_option: revealAnswers ? q.correct_option : null,
-          correct_text:   revealAnswers ? q[`option_${q.correct_option}`] : null,
-          chosen_option:  ans?.chosen_option || null,
-          is_correct:     Boolean(ans?.is_correct),
-          difficulty:     q.difficulty,
-        });
+      const byId = new Map(qRes.rows.map(q => [q.id, q]));
+      for (const qid of questionIds) {
+        const q = byId.get(qid);
+        const ans = answersMap[qid];
+        if (q) {
+          const options = { a: q.option_a, b: q.option_b, c: q.option_c, d: q.option_d };
+          // CHAR(1) from Postgres can include padding; normalize before lookup.
+          const correctOption = String(q.correct_option || '').trim().toLowerCase().slice(0, 1);
+          questionReview.push({
+            question_id:    q.id,
+            question_text:  q.question_text,
+            options,
+            correct_option: correctOption || null,
+            correct_text:   (correctOption && options[correctOption]) || null,
+            chosen_option:  ans?.chosen_option || null,
+            is_correct:     Boolean(ans?.is_correct),
+            difficulty:     q.difficulty,
+          });
+        }
       }
     }
 

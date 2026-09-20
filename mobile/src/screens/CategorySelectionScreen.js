@@ -10,7 +10,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../utils/theme';
-import { getCategories, createGameSession, getProfile, getPublicSettings, getGameHistory } from '../api';
+import { getCategories, getProfile, getPublicSettings, getGameHistory } from '../api';
 import { useAuth } from '../store/authStore';
 
 // Legacy map for old-style icon_name strings; new categories store the emoji directly
@@ -35,7 +35,6 @@ export default function CategorySelectionScreen({ navigation }) {
   const { user } = useAuth();
   const [selected, setSelected]     = useState([]);
   const [stakeInput, setStakeInput] = useState('');
-  const [loading, setLoading]       = useState(false);
   const restoredRef = useRef(false);
 
   const { data: catData, isLoading, refetch: refetchCategories } = useQuery({
@@ -64,15 +63,20 @@ export default function CategorySelectionScreen({ navigation }) {
 
     (async () => {
       let ids = [];
+      let hadStoredSelection = false;
       try {
         const raw = await AsyncStorage.getItem(categoriesStorageKey(user?.id));
-        const stored = raw ? JSON.parse(raw) : [];
-        if (Array.isArray(stored)) ids = stored.filter(id => playableIds.has(id));
+        if (raw !== null) {
+          hadStoredSelection = true;
+          const stored = JSON.parse(raw);
+          if (Array.isArray(stored)) ids = stored.filter(id => playableIds.has(id));
+        }
       } catch {
         ids = [];
       }
 
-      if (!ids.length) {
+      // An explicit empty save (Clear) should not be replaced by last-game categories.
+      if (!ids.length && !hadStoredSelection) {
         const lastGame = (historyData?.data || []).find(g => Array.isArray(g.selected_category_ids) && g.selected_category_ids.length);
         if (lastGame) ids = lastGame.selected_category_ids.filter(id => playableIds.has(id));
       }
@@ -103,6 +107,13 @@ export default function CategorySelectionScreen({ navigation }) {
 
   function persistSelection(ids) {
     AsyncStorage.setItem(categoriesStorageKey(user?.id), JSON.stringify(ids)).catch(() => {});
+  }
+
+  function clearSelected() {
+    if (!selected.length) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelected([]);
+    persistSelection([]);
   }
 
   function toggleCategory(id) {
@@ -141,32 +152,39 @@ export default function CategorySelectionScreen({ navigation }) {
   const nineNet      = netAfterTax(nineGross);
   const potentialWin = perfectNet;
   const taxPercentLabel = `${Math.round(taxRate * 100)}% tax`;
+  const shortfall = Math.max(0, Math.ceil((stake - balance) * 100) / 100);
+  const needsFunds = selected.length === REQUIRED_CATEGORIES && stakeValid && !hasEnoughBalance;
+
+  function promptFundWallet() {
+    const suggested = Math.max(1, Math.ceil(shortfall || stake || MIN_STAKE));
+    Alert.alert(
+      'Insufficient Balance',
+      `You need ${fmt(shortfall)} more to stake ${fmt(stake)}. Fund your wallet to continue.`,
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Fund Wallet',
+          onPress: () => navigation.navigate('Main', {
+            screen: 'Wallet',
+            params: { openDeposit: true, suggestedAmount: suggested },
+          }),
+        },
+      ]
+    );
+  }
 
   async function handleStart() {
-    if (!canStart) return;
-    setLoading(true);
-    try {
-      const res = await createGameSession({
-        category_ids: selected,
-        stake_amount: stake,
-      });
-      persistSelection(selected);
-      navigation.replace('Game', {
-        sessionId:    res.data.sessionId,
-        sessionToken: res.data.sessionToken,
-        firstQuestion: res.data.question,
-        questionNumber: res.data.questionNumber,
-        gameDuration: res.data.gameDuration,
-      });
-    } catch (err) {
-      const code = err?.error?.code;
-      if (code === 'CATEGORY_EXHAUSTED' || code === 'INSUFFICIENT_QUESTIONS') {
-        refetchCategories();
-      }
-      Alert.alert('Error', err?.error?.message || 'Could not start game. Check your wallet balance.');
-    } finally {
-      setLoading(false);
+    if (needsFunds) {
+      promptFundWallet();
+      return;
     }
+    if (!canStart) return;
+    persistSelection(selected);
+    navigation.navigate('GamePrep', {
+      category_ids: selected,
+      stake_amount: stake,
+      gameDuration: parseInt(settings.game_duration || '60', 10),
+    });
   }
 
   return (
@@ -178,7 +196,21 @@ export default function CategorySelectionScreen({ navigation }) {
             <Text style={{ color: colors.white50, fontSize: 22 }}>←</Text>
           </TouchableOpacity>
           <Text style={styles.title}>Select {REQUIRED_CATEGORIES} Categories</Text>
-          <Text style={styles.sub}>Choose exactly {REQUIRED_CATEGORIES} categories to play from ({selected.length}/{REQUIRED_CATEGORIES})</Text>
+          <View style={styles.subRow}>
+            <Text style={styles.sub}>
+              Choose exactly {REQUIRED_CATEGORIES} categories to play from ({selected.length}/{REQUIRED_CATEGORIES})
+            </Text>
+            <TouchableOpacity
+              onPress={clearSelected}
+              disabled={!selected.length}
+              activeOpacity={0.7}
+              style={[styles.clearBtn, !selected.length && styles.clearBtnDisabled]}
+            >
+              <Text style={[styles.clearBtnText, !selected.length && styles.clearBtnTextDisabled]}>
+                Clear
+              </Text>
+            </TouchableOpacity>
+          </View>
           {playableCount < REQUIRED_CATEGORIES && !isLoading && (
             <Text style={styles.exhaustedWarn}>
               You need {REQUIRED_CATEGORIES} categories with unused questions to start. You've completed {categories.filter(c => c.exhausted).length} categor{categories.filter(c => c.exhausted).length === 1 ? 'y' : 'ies'}.
@@ -285,9 +317,14 @@ export default function CategorySelectionScreen({ navigation }) {
               </Text>
             )}
             {stake > 0 && stakeValid && !hasEnoughBalance && (
-              <Text style={styles.stakeError}>
-                Insufficient wallet balance. You need {fmt(stake - balance)} more.
-              </Text>
+              <View style={styles.fundHint}>
+                <Text style={styles.stakeError}>
+                  Insufficient wallet balance. You need {fmt(shortfall)} more.
+                </Text>
+                <TouchableOpacity onPress={promptFundWallet} activeOpacity={0.8} style={styles.fundBtn}>
+                  <Text style={styles.fundBtnText}>Fund Wallet</Text>
+                </TouchableOpacity>
+              </View>
             )}
 
             {stake > 0 && stakeValid && hasEnoughBalance && (
@@ -320,26 +357,24 @@ export default function CategorySelectionScreen({ navigation }) {
           {/* Start button */}
           <TouchableOpacity
             onPress={handleStart}
-            disabled={!canStart || loading}
+            disabled={!canStart && !needsFunds}
             activeOpacity={0.85}
             style={{ marginTop: 16, marginBottom: 24 }}
           >
             <LinearGradient
-              colors={canStart ? [colors.blue, colors.teal] : ['#333', '#444']}
+              colors={canStart || needsFunds ? [colors.blue, colors.teal] : ['#333', '#444']}
               style={styles.startBtn}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
             >
-              {loading
-                ? <ActivityIndicator color="#fff" />
-                : <Text style={styles.startBtnText}>
-                    {selected.length < REQUIRED_CATEGORIES
-                      ? `Select ${REQUIRED_CATEGORIES - selected.length} more categor${REQUIRED_CATEGORIES - selected.length === 1 ? 'y' : 'ies'}`
-                      : !stakeValid
-                        ? `Enter stake (₦${MIN_STAKE.toLocaleString('en-NG')}–₦${MAX_STAKE.toLocaleString('en-NG')})`
-                        : !hasEnoughBalance
-                          ? 'Insufficient Balance'
-                          : '🎮 Start Game'}
-                  </Text>}
+              <Text style={styles.startBtnText}>
+                {selected.length < REQUIRED_CATEGORIES
+                  ? `Select ${REQUIRED_CATEGORIES - selected.length} more categor${REQUIRED_CATEGORIES - selected.length === 1 ? 'y' : 'ies'}`
+                  : !stakeValid
+                    ? `Enter stake (₦${MIN_STAKE.toLocaleString('en-NG')}–₦${MAX_STAKE.toLocaleString('en-NG')})`
+                    : !hasEnoughBalance
+                      ? '💰 Fund Wallet'
+                      : '🎮 Start Game'}
+              </Text>
             </LinearGradient>
           </TouchableOpacity>
         </ScrollView>
@@ -351,7 +386,15 @@ export default function CategorySelectionScreen({ navigation }) {
 const styles = StyleSheet.create({
   scroll:    { paddingHorizontal: 20, paddingTop: 16 },
   title:     { fontSize: 24, fontWeight: '800', color: colors.light, marginBottom: 6 },
-  sub:       { fontSize: 14, color: colors.white50, marginBottom: 8 },
+  subRow:    { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 8 },
+  sub:       { flex: 1, fontSize: 14, color: colors.white50 },
+  clearBtn:  {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10,
+    backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)',
+  },
+  clearBtnDisabled: { backgroundColor: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)' },
+  clearBtnText: { fontSize: 13, fontWeight: '700', color: colors.red },
+  clearBtnTextDisabled: { color: colors.white30 },
   exhaustedHint: { fontSize: 12, color: colors.white30, marginBottom: 20 },
   exhaustedWarn: { fontSize: 13, color: colors.yellow, marginBottom: 20, lineHeight: 18 },
   grid:      { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
@@ -388,7 +431,13 @@ const styles = StyleSheet.create({
   stakeRow:       { flexDirection: 'row', alignItems: 'center', gap: 8 },
   nairaSign:      { fontSize: 24, fontWeight: '700', color: colors.teal },
   stakeInput:     { flex: 1, fontSize: 32, fontWeight: '800', color: colors.light },
-  stakeError:     { marginTop: 8, fontSize: 13, color: colors.red, fontWeight: '600' },
+  stakeError:     { fontSize: 13, color: colors.red, fontWeight: '600' },
+  fundHint:       { marginTop: 10, gap: 10 },
+  fundBtn:        {
+    alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+    backgroundColor: 'rgba(9,132,227,0.18)', borderWidth: 1, borderColor: 'rgba(9,132,227,0.4)',
+  },
+  fundBtnText:    { fontSize: 13, fontWeight: '700', color: colors.blue },
   payoutInfo:     { marginTop: 14, gap: 4 },
   payoutLine:     { fontSize: 13, color: colors.white50 },
   summaryCard: { backgroundColor: 'rgba(9,132,227,0.12)', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: 'rgba(9,132,227,0.25)' },

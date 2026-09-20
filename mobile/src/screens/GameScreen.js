@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Animated,
+  View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView,
   BackHandler, Alert, Dimensions, AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -80,6 +80,7 @@ export default function GameScreen({ navigation, route }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const timerRef          = useRef(null);
+  const questionScrollRef = useRef(null);
   const slideAnim         = useRef(new Animated.Value(0)).current;
 
   // Kiosk mode
@@ -206,6 +207,7 @@ export default function GameScreen({ navigation, route }) {
           setQuestionNum(nextNum);
           setSelectedUuid(null);
           setIsSubmitting(false);
+          questionScrollRef.current?.scrollTo({ y: 0, animated: false });
           slideInNext();
         }
       }, FEEDBACK_DELAY);
@@ -245,14 +247,23 @@ export default function GameScreen({ navigation, route }) {
           />
         </View>
 
-        {/* Question */}
+        {/* Question — scrolls when the prompt is longer than the space above the options */}
         <Animated.View style={[styles.questionArea, { transform: [{ translateX: slideAnim }] }]}>
           {question?.category_name && (
             <View style={styles.categoryBadge}>
               <Text style={styles.categoryText}>{question.category_name}</Text>
             </View>
           )}
-          <Text style={styles.questionText}>{question?.question_text}</Text>
+          <ScrollView
+            ref={questionScrollRef}
+            style={styles.questionScroll}
+            contentContainerStyle={styles.questionScrollContent}
+            showsVerticalScrollIndicator
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={styles.questionText}>{question?.question_text}</Text>
+          </ScrollView>
         </Animated.View>
 
         {/* Options — only show selected state, never correct/wrong */}
@@ -286,7 +297,11 @@ const styles = StyleSheet.create({
   qNumText: { fontSize: 16, fontWeight: '700', color: colors.light },
   progressBar: { height: 4, backgroundColor: 'rgba(255,255,255,0.1)', marginHorizontal: 20, borderRadius: 2, overflow: 'hidden' },
   progressFill: { height: 4, borderRadius: 2 },
-  questionArea: { flex: 1, paddingHorizontal: 24, paddingTop: 24, justifyContent: 'center' },
+  questionArea: {
+    flex: 1, paddingHorizontal: 24, paddingTop: 24, minHeight: 0, overflow: 'hidden',
+  },
+  questionScroll: { flex: 1 },
+  questionScrollContent: { flexGrow: 1, justifyContent: 'center', paddingBottom: 16 },
   categoryBadge: {
     alignSelf: 'flex-start', marginBottom: 14,
     backgroundColor: 'rgba(0,206,201,0.15)', borderWidth: 1,

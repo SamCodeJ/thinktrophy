@@ -6,7 +6,7 @@ const PLAY_STORE_URL = '#';  // replace when live
 
 const steps = [
   { icon: '📲', text: 'Download the app from the App Store or Google Play' },
-  { icon: '🔑', text: 'Log in using the email and password you just created' },
+  { icon: '🔑', text: 'Log in using your username or email and the password you just created' },
   { icon: '💰', text: 'Fund your wallet with any amount from ₦500' },
   { icon: '🏆', text: 'Pick 7 categories, stake your amount, and start playing!' },
 ];

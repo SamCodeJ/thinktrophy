@@ -2,6 +2,7 @@ import client from './client';
 
 // Auth
 export const register       = (data) => client.post('/auth/register', data);
+export const checkUsername  = (username) => client.get(`/auth/username-available?username=${encodeURIComponent(username)}`);
 export const login          = (data) => client.post('/auth/login', data);
 export const refreshTokens  = (refreshToken) => client.post('/auth/refresh', { refreshToken });
 export const logout         = () => client.post('/auth/logout');
@@ -19,7 +20,7 @@ export const getLeaderboard = (period = 'weekly') => client.get(`/user/leaderboa
 // Payment
 export const deposit        = (data) => client.post('/payment/deposit', data);
 export const verifyPayment  = (reference) => client.post(`/payment/verify/${reference}`);
-export const withdraw       = (data) => client.post('/payment/withdraw', data);
+export const withdraw       = (data) => client.post('/payment/withdraw', data, { timeout: 60000 });
 export const getBanks       = () => client.get('/payment/banks');
 export const resolveAccount = (data) => client.post('/payment/resolve-account', data);
 

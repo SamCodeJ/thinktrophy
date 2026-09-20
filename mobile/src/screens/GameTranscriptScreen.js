@@ -12,6 +12,10 @@ import { getSessionResult } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+function optionLetter(value) {
+  return String(value || '').trim().toLowerCase().slice(0, 1);
+}
+
 function StatPill({ label, value, color }) {
   return (
     <View style={[styles.pill, { borderColor: `${color}30` }]}>
@@ -152,10 +156,12 @@ export default function GameTranscriptScreen({ navigation, route }) {
                   {['a', 'b', 'c', 'd'].map(key => {
                     const text       = q.options?.[key];
                     if (!text) return null;
-                    const isChosen   = key === q.chosen_option;
-                    const isCorrect  = q.correct_option
-                      ? key === q.correct_option
-                      : (isChosen && Boolean(q.is_correct));
+                    const chosenKey  = optionLetter(q.chosen_option);
+                    const correctKey = optionLetter(q.correct_option);
+                    const isChosen   = key === chosenKey;
+                    const isCorrect  = correctKey
+                      ? key === correctKey
+                      : (q.correct_text ? text === q.correct_text : (isChosen && Boolean(q.is_correct)));
                     const isWrongPick = isChosen && !q.is_correct;
 
                     return (
@@ -191,6 +197,11 @@ export default function GameTranscriptScreen({ navigation, route }) {
                 {/* Skipped message */}
                 {!q.chosen_option && (
                   <Text style={styles.skippedText}>⏭ Not answered (time expired)</Text>
+                )}
+                {!q.is_correct && (q.correct_text || q.options?.[optionLetter(q.correct_option)]) && (
+                  <Text style={styles.correctHint}>
+                    Correct: {q.correct_text || q.options[optionLetter(q.correct_option)]}
+                  </Text>
                 )}
               </View>
             ))}
@@ -264,4 +275,5 @@ const styles = StyleSheet.create({
   optionText: { flex: 1, fontSize: 13, color: colors.light, lineHeight: 19 },
   optionMark: { fontSize: 14, fontWeight: '800' },
   skippedText: { fontSize: 12, color: colors.yellow, marginTop: 10, fontStyle: 'italic' },
+  correctHint: { fontSize: 13, color: colors.green, fontWeight: '700', marginTop: 10 },
 });

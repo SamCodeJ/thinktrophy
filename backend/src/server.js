@@ -1,4 +1,7 @@
 require('dotenv').config();
+const { initRedis, pingRedis } = require('./utils/redis');
+initRedis();
+
 const express = require('express');
 const helmet  = require('helmet');
 const cors    = require('cors');
@@ -47,7 +50,15 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ─── Health check ────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ status: 'ok', service: 'ThinkTrophy API', ts: Date.now() }));
+app.get('/health', async (req, res) => {
+  const redis = await pingRedis();
+  res.json({
+    status: 'ok',
+    service: 'ThinkTrophy API',
+    redis,
+    ts: Date.now(),
+  });
+});
 
 // ─── Public app / landing (no auth required) ────────────────────────────────
 app.get('/api/app/settings', getPublicSettings);
@@ -65,10 +76,15 @@ app.use('/api/admin',    adminRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n🏆 ThinkTrophy API running on port ${PORT}`);
   console.log(`   ENV: ${process.env.NODE_ENV || 'development'}`);
   console.log(`   Health: http://localhost:${PORT}/health\n`);
 });
+
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+server.requestTimeout = 30000;
+server.timeout = 30000;
 
 module.exports = app;

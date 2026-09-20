@@ -3,14 +3,14 @@ require('dotenv').config();
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 20,
+  max: parseInt(process.env.DB_POOL_MAX || '8', 10),
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 5000,
+  statement_timeout: 15000,
 });
 
 pool.on('error', (err) => {
   console.error('Unexpected error on idle PostgreSQL client:', err);
-  process.exit(-1);
 });
 
 const query = (text, params) => pool.query(text, params);

@@ -7,6 +7,7 @@ const registerSchema = z.object({
   first_name: z.string().min(1, 'First name is required'),
   last_name:  z.string().min(1, 'Last name is required'),
   phone_number: z.string().min(5, 'Phone number is required'),
+  referral_code: z.string().max(20).optional(),
   dob: z.string().refine(dateStr => {
     const dobDate = new Date(dateStr);
     if (isNaN(dobDate.getTime())) return false;
@@ -22,9 +23,14 @@ const registerSchema = z.object({
 });
 
 const loginSchema = z.object({
-  email:    z.string().email(),
   password: z.string().min(1),
-});
+  email: z.string().min(1).optional(),
+  username: z.string().min(1).optional(),
+  identifier: z.string().min(1).optional(),
+}).refine(
+  d => !!(String(d.identifier || d.email || d.username || '').trim()),
+  { message: 'Username or email is required', path: ['email'] }
+);
 
 const adminLoginSchema = z.object({
   email:    z.string().email(),
@@ -47,10 +53,10 @@ const depositSchema = z.object({
 });
 
 const withdrawSchema = z.object({
-  amount:          z.number().positive(),
+  amount: z.coerce.number().finite().positive(),
   account_details: z.object({
-    type:          z.enum(['bank', 'mobile_money']),
-    account_number: z.string().min(5),
+    type:           z.enum(['bank', 'mobile_money']),
+    account_number: z.string().min(10).max(10),
     account_name:   z.string().min(2),
     bank_code:      z.string().min(3, 'Bank code is required'),
   }),

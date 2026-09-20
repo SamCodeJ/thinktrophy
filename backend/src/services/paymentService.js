@@ -347,17 +347,52 @@ async function verifyDeposit(userId, txRef, { flwId } = {}) {
   }
 }
 
+async function failPendingWithdrawal(reference, userId, amount, gatewayError) {
+  const failed = await query(
+    `UPDATE transactions
+     SET status = 'failed',
+         metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+     WHERE reference = $2 AND type = 'withdrawal' AND status = 'pending'
+     RETURNING id`,
+    [JSON.stringify({ gateway_error: gatewayError }), reference]
+  );
+  if (failed.rowCount) {
+    await query(
+      'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
+      [amount, userId]
+    );
+  }
+}
+
+function isFlwTransferSuccessStatus(status) {
+  const s = String(status || '').toUpperCase();
+  return s === 'SUCCESSFUL' || s === 'SUCCESS';
+}
+
+function isFlwTransferFailedStatus(status) {
+  const s = String(status || '').toUpperCase();
+  return s === 'FAILED' || s === 'FAILURE' || s === 'CANCELLED';
+}
+
 async function requestWithdrawal(userId, amount, accountDetails) {
+  if (!process.env.FLW_SECRET_KEY) {
+    throw new AppError('Payment gateway is not configured', 500, 'GATEWAY_ERROR');
+  }
   if (!accountDetails?.bank_code || !accountDetails?.account_number) {
     throw new AppError('Bank account details are required', 400, 'INVALID_ACCOUNT');
   }
 
-  const withdrawalFee = parseFloat(process.env.WITHDRAWAL_FEE || '50');
-  if (amount <= withdrawalFee) {
+  const withdrawalAmount = roundMoney(amount);
+  if (!Number.isFinite(withdrawalAmount) || withdrawalAmount <= 0) {
+    throw new AppError('Invalid withdrawal amount', 400, 'INVALID_AMOUNT');
+  }
+
+  const withdrawalFee = roundMoney(process.env.WITHDRAWAL_FEE || '50');
+  if (withdrawalAmount <= withdrawalFee) {
     throw new AppError(`Minimum withdrawal must be greater than the ${formatNaira(withdrawalFee)} fee`, 400, 'AMOUNT_TOO_LOW');
   }
 
-  const transferAmount = amount - withdrawalFee;
+  const transferAmount = roundMoney(withdrawalAmount - withdrawalFee);
   const reference = `WD-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`;
   const client = await getClient();
   let user;
@@ -375,11 +410,25 @@ async function requestWithdrawal(userId, amount, accountDetails) {
       throw new AppError('Please verify your email before withdrawing', 403, 'EMAIL_NOT_VERIFIED');
     }
 
+    const pendingRes = await client.query(
+      `SELECT id FROM transactions
+       WHERE user_id = $1 AND type = 'withdrawal' AND status = 'pending'
+       LIMIT 1`,
+      [userId]
+    );
+    if (pendingRes.rowCount) {
+      throw new AppError(
+        'You already have a withdrawal in progress. Please wait for it to complete or fail before requesting another.',
+        409,
+        'WITHDRAWAL_PENDING'
+      );
+    }
+
     const debit = await client.query(
       `UPDATE users SET wallet_balance = wallet_balance - $1
        WHERE id = $2 AND wallet_balance >= $1
        RETURNING wallet_balance`,
-      [amount, userId]
+      [withdrawalAmount, userId]
     );
     if (!debit.rowCount) {
       throw new AppError('Insufficient balance', 400, 'INSUFFICIENT_BALANCE');
@@ -388,7 +437,7 @@ async function requestWithdrawal(userId, amount, accountDetails) {
     await client.query(
       `INSERT INTO transactions (user_id, type, amount, status, reference, metadata)
        VALUES ($1, 'withdrawal', $2, 'pending', $3, $4)`,
-      [userId, amount, reference, JSON.stringify({
+      [userId, withdrawalAmount, reference, JSON.stringify({
         ...accountDetails,
         fee: withdrawalFee,
         transfer_amount: transferAmount,
@@ -416,23 +465,30 @@ async function requestWithdrawal(userId, amount, accountDetails) {
         reference,
         callback_url: `${process.env.APP_URL}/api/payment/webhook`,
         debit_currency: 'NGN',
+        ...(accountDetails.account_name ? { beneficiary_name: accountDetails.account_name } : {}),
       },
       {
         headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` },
+        timeout: 45000,
       }
     );
+    const flwOk = String(flwRes.data?.status || '').toLowerCase() === 'success';
     flwTransferId = flwRes.data?.data?.id || null;
+    if (!flwOk || !flwTransferId) {
+      const gatewayError = flwRes.data || 'Flutterwave did not accept the transfer';
+      console.error('Flutterwave Transfer Rejected:', gatewayError);
+      await failPendingWithdrawal(reference, userId, withdrawalAmount, gatewayError);
+      throw new AppError('Failed to initiate transfer with payment gateway', 500, 'GATEWAY_ERROR');
+    }
   } catch (flwErr) {
+    if (flwErr instanceof AppError) throw flwErr;
     console.error('Flutterwave Transfer Error:', flwErr.response?.data || flwErr.message);
-    await query(
-      `UPDATE transactions SET status = 'failed', metadata = metadata || $1::jsonb WHERE reference = $2 AND type = 'withdrawal'`,
-      [JSON.stringify({ gateway_error: flwErr.response?.data || flwErr.message }), reference]
-    );
-    await query(
-      'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
-      [amount, userId]
-    );
-    throw new AppError('Failed to initiate transfer with payment gateway', 500, 'GATEWAY_ERROR');
+    if (flwErr.response) {
+      await failPendingWithdrawal(reference, userId, withdrawalAmount, flwErr.response.data || flwErr.message);
+      throw new AppError('Failed to initiate transfer with payment gateway', 500, 'GATEWAY_ERROR');
+    }
+    // Timeout/network after debit: do not refund. The transfer may still exist;
+    // webhook completion or failure will settle the pending row.
   }
 
   if (flwTransferId) {
@@ -445,7 +501,7 @@ async function requestWithdrawal(userId, amount, accountDetails) {
   }
 
   const zohoService = require('./zohoService');
-  zohoService.syncWithdrawalRequest(userId, amount, withdrawalFee, reference)
+  zohoService.syncWithdrawalRequest(userId, withdrawalAmount, withdrawalFee, reference)
     .catch(err => console.error('Failed to sync withdrawal request to Zoho Books:', err));
 
   if (user && user.email) {
@@ -453,11 +509,11 @@ async function requestWithdrawal(userId, amount, accountDetails) {
       user.email,
       user.username,
       'Withdrawal Request Received',
-      `Your withdrawal request for ₦${parseFloat(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been submitted successfully and is currently being processed.`
+      `Your withdrawal request for ₦${parseFloat(withdrawalAmount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been submitted successfully and is currently being processed.`
     ).catch(err => console.error('Failed to send withdrawal email:', err));
   }
 
-  return { reference, amount, message: 'Withdrawal request submitted for processing' };
+  return { reference, amount: withdrawalAmount, message: 'Withdrawal request submitted for processing' };
 }
 
 async function handleTransferCompleted(data) {
@@ -478,14 +534,17 @@ async function handleTransferCompleted(data) {
     tx = txRes.rows[0];
 
     if (tx && tx.status === 'pending') {
-      if (status === 'SUCCESSFUL') {
+      if (isFlwTransferSuccessStatus(status)) {
         await client.query(`UPDATE transactions SET status = 'verified' WHERE id = $1`, [tx.id]);
-      } else if (status === 'FAILED') {
+      } else if (isFlwTransferFailedStatus(status)) {
         await client.query(`UPDATE transactions SET status = 'failed' WHERE id = $1`, [tx.id]);
         await client.query(
           `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
           [tx.amount, tx.user_id]
         );
+      } else {
+        logStatus = 'ignored';
+        logError = `Transfer status ${status || 'unknown'}`;
       }
     } else {
       logStatus = 'ignored';
@@ -506,10 +565,10 @@ async function handleTransferCompleted(data) {
     const transferAmount = meta.transfer_amount || tx.amount;
     const fee = meta.fee || 0;
 
-    if (status === 'SUCCESSFUL') {
+    if (isFlwTransferSuccessStatus(status)) {
       zohoService.syncWithdrawalSuccess(tx.user_id, transferAmount, tx.reference)
         .catch(err => console.error('Failed to sync withdrawal success to Zoho Books:', err));
-    } else if (status === 'FAILED') {
+    } else if (isFlwTransferFailedStatus(status)) {
       zohoService.syncWithdrawalFailed(tx.user_id, tx.amount, fee, tx.reference)
         .catch(err => console.error('Failed to sync withdrawal failure to Zoho Books:', err));
     }

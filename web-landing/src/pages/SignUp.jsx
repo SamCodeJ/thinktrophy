@@ -1,19 +1,31 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Trophy, Eye, EyeOff, ArrowRight, Check, AlertCircle, User, Mail, Lock, Phone, Calendar, Type } from 'lucide-react';
+import { Eye, EyeOff, ArrowRight, Check, AlertCircle, User, Mail, Lock, Phone, Calendar, Type, Loader2 } from 'lucide-react';
 import axios from 'axios';
 
 const rules = [
-  'At least 6 characters',
-  'One uppercase letter',
-  'One number',
+  { label: 'At least 8 characters', test: p => p.length >= 8 },
+  { label: 'One uppercase letter', test: p => /[A-Z]/.test(p) },
+  { label: 'One number', test: p => /[0-9]/.test(p) },
 ];
 
-function checkRule(password, i) {
-  if (i === 0) return password.length >= 6;
-  if (i === 1) return /[A-Z]/.test(password);
-  if (i === 2) return /[0-9]/.test(password);
-  return false;
+function ymdLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function maxAdultDob() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return ymdLocal(d);
+}
+
+function minDob() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 100);
+  return ymdLocal(d);
 }
 
 export default function SignUp() {
@@ -27,18 +39,71 @@ export default function SignUp() {
   const [agreed, setAgreed]         = useState(false);
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState('');
+  const [usernameStatus, setUsernameStatus] = useState({ state: 'idle', message: '' });
 
   const set = (k, v) => {
     setError('');
     setForm(f => ({ ...f, [k]: v }));
   };
 
-  const pwStrength = rules.filter((_, i) => checkRule(form.password, i)).length;
+  useEffect(() => {
+    const username = form.username.trim();
+    if (!username) {
+      setUsernameStatus({ state: 'idle', message: '' });
+      return;
+    }
+    if (username.length < 3) {
+      setUsernameStatus({ state: 'invalid', message: 'At least 3 characters' });
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+      setUsernameStatus({ state: 'invalid', message: 'Letters, numbers, and underscores only' });
+      return;
+    }
+
+    let cancelled = false;
+    setUsernameStatus({ state: 'checking', message: 'Checking availability…' });
+    const timer = setTimeout(async () => {
+      try {
+        const res = await axios.get('/api/auth/username-available', { params: { username } });
+        if (cancelled) return;
+        const data = res.data?.data || {};
+        setUsernameStatus({
+          state: data.available ? 'available' : 'taken',
+          message: data.message || (data.available ? 'Username is available' : 'Username is already taken'),
+        });
+      } catch {
+        if (!cancelled) setUsernameStatus({ state: 'idle', message: '' });
+      }
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [form.username]);
+
+  const passwordChecks = useMemo(
+    () => rules.map(rule => ({ ...rule, ok: rule.test(form.password) })),
+    [form.password]
+  );
+  const pwStrength = passwordChecks.filter(r => r.ok).length;
+  const passwordStrong = pwStrength === rules.length;
+  const usernameOk = usernameStatus.state === 'available';
+  const canSubmit = agreed && usernameOk && passwordStrong && form.password === form.confirm && !loading;
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
 
+    if (!usernameOk) {
+      setError(usernameStatus.message || 'Please choose an available username.');
+      return;
+    }
+    if (!passwordStrong) {
+      setError('Password must be at least 8 characters with one uppercase letter and one number.');
+      return;
+    }
     if (form.password !== form.confirm) {
       setError('Passwords do not match.');
       return;
@@ -157,6 +222,8 @@ export default function SignUp() {
                     value={form.dob}
                     onChange={e => set('dob', e.target.value)}
                     required
+                    min={minDob()}
+                    max={maxAdultDob()}
                   />
                 </div>
               </div>
@@ -187,18 +254,35 @@ export default function SignUp() {
               <div className="relative">
                 <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-white/30 pointer-events-none" />
                 <input
-                  className="input pl-10"
+                  className="input pl-10 pr-10"
                   type="text"
                   placeholder="thinktrophy_pro"
                   value={form.username}
-                  onChange={e => set('username', e.target.value)}
+                  onChange={e => set('username', e.target.value.replace(/\s/g, ''))}
                   required
                   minLength={3}
                   maxLength={30}
                   pattern="[a-zA-Z0-9_]+"
                   title="Letters, numbers, and underscores only"
+                  autoComplete="username"
                 />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2">
+                  {usernameStatus.state === 'checking' && <Loader2 size={14} className="animate-spin text-slate-400" />}
+                  {usernameStatus.state === 'available' && <Check size={14} className="text-green-500" />}
+                  {(usernameStatus.state === 'taken' || usernameStatus.state === 'invalid') && (
+                    <AlertCircle size={14} className="text-red-500" />
+                  )}
+                </span>
               </div>
+              {usernameStatus.message && (
+                <p className={`text-xs mt-1.5 ${
+                  usernameStatus.state === 'available' ? 'text-green-600 dark:text-green-400'
+                  : usernameStatus.state === 'checking' ? 'text-slate-400 dark:text-white/40'
+                  : 'text-red-500'
+                }`}>
+                  {usernameStatus.message}
+                </p>
+              )}
             </div>
 
             {/* Email */}
@@ -233,7 +317,7 @@ export default function SignUp() {
                   value={form.password}
                   onChange={e => set('password', e.target.value)}
                   required
-                  minLength={6}
+                  minLength={8}
                 />
                 <button
                   type="button"
@@ -262,14 +346,14 @@ export default function SignUp() {
                     ))}
                   </div>
                   <div className="grid grid-cols-3 gap-x-2">
-                    {rules.map((rule, i) => (
-                      <div key={rule} className="flex items-center gap-1">
+                    {passwordChecks.map(rule => (
+                      <div key={rule.label} className="flex items-center gap-1">
                         <Check
                           size={11}
-                          className={`flex-shrink-0 transition-colors ${checkRule(form.password, i) ? 'text-green-500' : 'text-slate-300 dark:text-white/20'}`}
+                          className={`flex-shrink-0 transition-colors ${rule.ok ? 'text-green-500' : 'text-slate-300 dark:text-white/20'}`}
                         />
-                        <span className={`text-xs transition-colors ${checkRule(form.password, i) ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-white/30'}`}>
-                          {rule}
+                        <span className={`text-xs transition-colors ${rule.ok ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-white/30'}`}>
+                          {rule.label}
                         </span>
                       </div>
                     ))}
@@ -308,24 +392,33 @@ export default function SignUp() {
 
             {/* Terms */}
             <label className="flex items-start gap-3 cursor-pointer group mt-2">
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={agreed}
+                onChange={() => setAgreed(a => !a)}
+              />
               <div className={`w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center mt-0.5 transition-all
                 ${agreed ? 'bg-brand-blue border-brand-blue' : 'border-slate-300 dark:border-white/20 group-hover:border-brand-blue'}`}
-                onClick={() => setAgreed(a => !a)}
               >
                 {agreed && <Check size={11} className="text-white" />}
               </div>
               <span className="text-sm text-slate-600 dark:text-white/60 leading-relaxed">
                 I agree to the{' '}
-                <Link to="/terms" className="text-brand-blue hover:underline">Terms of Service</Link>
+                <Link to="/terms" className="text-brand-blue hover:underline" onClick={e => e.stopPropagation()}>Terms of Service</Link>
                 {' '}and{' '}
-                <Link to="/privacy-policy" className="text-brand-blue hover:underline">Privacy Policy</Link>
+                <Link to="/privacy-policy" className="text-brand-blue hover:underline" onClick={e => e.stopPropagation()}>Privacy Policy</Link>
               </span>
             </label>
 
             <button
               type="submit"
-              disabled={loading}
-              className="btn-primary w-full py-3.5 mt-2"
+              disabled={!canSubmit}
+              className={`btn-primary w-full py-3.5 mt-2 ${
+                !canSubmit
+                  ? 'opacity-40 cursor-not-allowed shadow-none hover:opacity-40 active:scale-100'
+                  : ''
+              }`}
             >
               {loading ? (
                 <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">

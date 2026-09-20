@@ -271,7 +271,7 @@ async function createQuestion(req, res, next) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [category_id, question_text, option_a, option_b, option_c, option_d, correct_option, difficulty, req.admin.adminId]
     );
-    cache.del('active_categories');
+    await cache.del('active_categories');
     
     await logAdminAction({
       adminId: req.admin.adminId,
@@ -313,7 +313,7 @@ async function updateQuestion(req, res, next) {
       ]
     );
     if (!result.rows[0]) throw new AppError('Question not found', 404, 'NOT_FOUND');
-    cache.del('active_categories');
+    await cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
@@ -338,7 +338,7 @@ async function deleteQuestion(req, res, next) {
     await query('DELETE FROM user_seen_questions WHERE question_id = $1', [id]);
     const result = await query('DELETE FROM questions WHERE id = $1 RETURNING id', [id]);
     if (!result.rows[0]) throw new AppError('Question not found', 404, 'NOT_FOUND');
-    cache.del('active_categories');
+    await cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
@@ -487,7 +487,7 @@ async function createCategory(req, res, next) {
       `INSERT INTO categories (name, description, icon_name) VALUES ($1,$2,$3) RETURNING *`,
       [name, description || null, icon_name || 'help-circle']
     );
-    cache.del('active_categories');
+    await cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
@@ -516,7 +516,7 @@ async function updateCategory(req, res, next) {
       [name, description, icon_name, is_active, id]
     );
     if (!result.rows[0]) throw new AppError('Category not found', 404, 'NOT_FOUND');
-    cache.del('active_categories');
+    await cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
@@ -542,7 +542,7 @@ async function deleteCategory(req, res, next) {
     await query('DELETE FROM questions WHERE category_id = $1', [id]);
     const result = await query('DELETE FROM categories WHERE id = $1 RETURNING id', [id]);
     if (!result.rows[0]) throw new AppError('Category not found', 404, 'NOT_FOUND');
-    cache.del('active_categories');
+    await cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
@@ -569,7 +569,7 @@ async function bulkDeleteCategories(req, res, next) {
     );
     await query('DELETE FROM questions WHERE category_id = ANY($1::uuid[])', [ids]);
     const result = await query('DELETE FROM categories WHERE id = ANY($1::uuid[]) RETURNING id', [ids]);
-    cache.del('active_categories');
+    await cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
@@ -591,7 +591,7 @@ async function bulkDeleteQuestions(req, res, next) {
     }
     await query('DELETE FROM user_seen_questions WHERE question_id = ANY($1::uuid[])', [ids]);
     const result = await query('DELETE FROM questions WHERE id = ANY($1::uuid[]) RETURNING id', [ids]);
-    cache.del('active_categories');
+    await cache.del('active_categories');
 
     await logAdminAction({
       adminId: req.admin.adminId,
@@ -982,7 +982,7 @@ async function deleteTestimonial(req, res, next) {
 // ─── Settings ────────────────────────────────────────────────────────────────
 const PUBLIC_SETTING_KEYS = [
   'kiosk_mode', 'kiosk_warning_count', 'platform_name', 'platform_tagline',
-  'user_win_tax_percentage', 'payout_perfect', 'payout_nine',
+  'user_win_tax_percentage', 'payout_perfect', 'payout_nine', 'game_duration',
 ];
 const SUPER_ADMIN_SETTING_KEYS = [
   'min_stake', 'max_stake', 'payout_perfect', 'payout_nine',
@@ -1025,7 +1025,8 @@ async function updateSettings(req, res, next) {
         [key, String(value)]
       );
     }
-    cache.del('active_categories');
+    await cache.del('active_categories');
+    await cache.del('platform_settings');
 
     await logAdminAction({
       adminId: req.admin.adminId,

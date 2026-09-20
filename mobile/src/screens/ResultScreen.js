@@ -12,6 +12,20 @@ import { getSessionResult } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+function optionLetter(value) {
+  return String(value || '').trim().toLowerCase().slice(0, 1);
+}
+
+function chosenAnswerText(q) {
+  const key = optionLetter(q.chosen_option);
+  return q.options?.[key] || q.options?.[q.chosen_option] || '—';
+}
+
+function correctAnswerText(q) {
+  const key = optionLetter(q.correct_option);
+  return q.correct_text || q.options?.[key] || '—';
+}
+
 function ScoreCounter({ target, duration = 1200 }) {
   const [count, setCount] = useState(0);
   useEffect(() => {
@@ -163,12 +177,12 @@ export default function ResultScreen({ navigation, route }) {
                       <Text style={{ fontSize: 14 }}>{q.is_correct ? '✅' : '❌'}</Text>
                     </View>
                     <Text style={styles.reviewQ}>{q.question_text}</Text>
-                    {!q.is_correct && (
-                      <View style={{ marginTop: 8 }}>
-                        <Text style={styles.reviewWrong}>Your answer: {q.options[q.chosen_option] || '—'}</Text>
-                        <Text style={styles.reviewCorrect}>Correct: {q.correct_text}</Text>
-                      </View>
-                    )}
+                    <View style={{ marginTop: 8 }}>
+                      {!q.is_correct && (
+                        <Text style={styles.reviewWrong}>Your answer: {chosenAnswerText(q)}</Text>
+                      )}
+                      <Text style={styles.reviewCorrect}>Correct: {correctAnswerText(q)}</Text>
+                    </View>
                   </View>
                 ))}
               </View>

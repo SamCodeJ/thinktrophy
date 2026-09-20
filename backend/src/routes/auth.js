@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const {
   register,
+  checkUsername,
   login,
   forgotPassword,
   resetPassword,
@@ -15,11 +16,12 @@ const {
   adminUpdatePassword,
 } = require('../controllers/authController');
 const { validate, registerSchema, loginSchema, adminLoginSchema, forgotPasswordSchema, resetPasswordSchema, updatePasswordSchema } = require('../utils/validators');
-const { authLimiter } = require('../middleware/rateLimiter');
+const { authLimiter, registerLimiter, loginLimiter, usernameCheckLimiter } = require('../middleware/rateLimiter');
 const { requireUser, requireAdmin } = require('../middleware/auth');
 
-router.post('/register',             authLimiter, validate(registerSchema),   register);
-router.post('/login',                authLimiter, validate(loginSchema),      login);
+router.get('/username-available',    usernameCheckLimiter, checkUsername);
+router.post('/register',             registerLimiter, validate(registerSchema),   register);
+router.post('/login',                loginLimiter, validate(loginSchema),      login);
 router.post('/forgot-password',      authLimiter, validate(forgotPasswordSchema), forgotPassword);
 router.post('/reset-password',       authLimiter, validate(resetPasswordSchema),  resetPassword);
 router.post('/update-password',      requireUser, validate(updatePasswordSchema), updatePassword);

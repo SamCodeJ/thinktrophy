@@ -6,7 +6,7 @@ const { AppError } = require('../middleware/errorHandler');
 const { sendVerificationEmail, sendPasswordResetEmail, sendActionEmail } = require('../utils/emailService');
 const { renderVerificationPage } = require('../utils/verificationPage');
 
-const SALT_ROUNDS = 12;
+const SALT_ROUNDS = 10;
 const VERIFICATION_EXPIRY_HOURS = 24;
 const MAX_RESET_ATTEMPTS = 5;
 const RESET_LOCK_MS = 15 * 60 * 1000;
@@ -39,6 +39,55 @@ function generateVerificationToken() {
   return { plain, hash };
 }
 
+function hashRefreshToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function refreshTokenMatches(token, storedHash) {
+  if (!storedHash) return false;
+  if (storedHash.startsWith('$2')) {
+    return bcrypt.compare(token, storedHash);
+  }
+  const incoming = hashRefreshToken(token);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(incoming), Buffer.from(storedHash));
+  } catch {
+    return false;
+  }
+}
+
+async function checkUsername(req, res, next) {
+  try {
+    const username = String(req.query.username || '').trim();
+    if (username.length < 3) {
+      return res.json({
+        success: true,
+        data: { available: false, valid: false, message: 'Username must be at least 3 characters' },
+      });
+    }
+    if (username.length > 30 || !/^[a-zA-Z0-9_]+$/.test(username)) {
+      return res.json({
+        success: true,
+        data: { available: false, valid: false, message: 'Use letters, numbers, and underscores only' },
+      });
+    }
+
+    const result = await query(
+      'SELECT 1 FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1',
+      [username]
+    );
+    const taken = result.rows.length > 0;
+    res.json({
+      success: true,
+      data: {
+        available: !taken,
+        valid: true,
+        message: taken ? 'Username is already taken' : 'Username is available',
+      },
+    });
+  } catch (err) { next(err); }
+}
+
 async function register(req, res, next) {
   try {
     const { username, email, password, phone_number, first_name, last_name, dob, referral_code } = req.body;
@@ -69,7 +118,8 @@ async function register(req, res, next) {
     );
     const user = result.rows[0];
 
-    await sendVerificationEmail(user.email, user.username, plain);
+    sendVerificationEmail(user.email, user.username, plain)
+      .catch(err => console.error('Failed to send verification email:', err));
 
     res.status(201).json({
       success: true,
@@ -89,11 +139,16 @@ async function register(req, res, next) {
 
 async function login(req, res, next) {
   try {
-    const { email, password } = req.body;
-    const normalizedEmail = email ? email.trim().toLowerCase() : '';
+    const { email, username, identifier, password } = req.body;
+    const loginId = String(identifier || email || username || '').trim();
+    if (!loginId) throw new AppError('Username or email is required', 400, 'VALIDATION_ERROR');
+
     const result = await query(
-      'SELECT id, username, email, password_hash, is_active, email_verified FROM users WHERE LOWER(email) = $1',
-      [normalizedEmail]
+      `SELECT id, username, email, password_hash, is_active, email_verified
+       FROM users
+       WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)
+       LIMIT 1`,
+      [loginId]
     );
     const user = result.rows[0];
     if (!user) {
@@ -108,7 +163,7 @@ async function login(req, res, next) {
 
     const accessToken  = signAccessToken({ type: 'user', userId: user.id, username: user.username });
     const refreshToken = signRefreshToken({ type: 'user', userId: user.id });
-    const refreshHash  = await bcrypt.hash(refreshToken, 8);
+    const refreshHash  = hashRefreshToken(refreshToken);
     await query('UPDATE users SET refresh_token_hash = $1 WHERE id = $2', [refreshHash, user.id]);
 
     res.json({
@@ -306,12 +361,12 @@ async function refreshToken(req, res, next) {
     if (!user || !user.refresh_token_hash) throw new AppError('Session not found', 401, 'SESSION_NOT_FOUND');
     if (!user.is_active) throw new AppError('Account is disabled', 403, 'ACCOUNT_DISABLED');
 
-    const match = await bcrypt.compare(token, user.refresh_token_hash);
+    const match = await refreshTokenMatches(token, user.refresh_token_hash);
     if (!match) throw new AppError('Invalid refresh token', 401, 'TOKEN_INVALID');
 
     const newAccessToken  = signAccessToken({ type: 'user', userId: user.id, username: user.username });
     const newRefreshToken = signRefreshToken({ type: 'user', userId: user.id });
-    const newHash = await bcrypt.hash(newRefreshToken, 8);
+    const newHash = hashRefreshToken(newRefreshToken);
     await query('UPDATE users SET refresh_token_hash = $1 WHERE id = $2', [newHash, user.id]);
 
     res.json({ success: true, data: { accessToken: newAccessToken, refreshToken: newRefreshToken } });
@@ -472,4 +527,4 @@ async function adminResetPassword(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { register, login, forgotPassword, resetPassword, updatePassword, verifyEmail, resendVerification, refreshToken, logout, adminLogin, adminForgotPassword, adminResetPassword, adminUpdatePassword };
+module.exports = { register, checkUsername, login, forgotPassword, resetPassword, updatePassword, verifyEmail, resendVerification, refreshToken, logout, adminLogin, adminForgotPassword, adminResetPassword, adminUpdatePassword };
