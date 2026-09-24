@@ -26,6 +26,14 @@ function ctaStyle() {
   return `background-color:${BRAND.blue};background-image:linear-gradient(135deg,${BRAND.blue},${BRAND.teal});color:#fff;padding:14px 32px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:16px;display:inline-block;`;
 }
 
+function mailFrom() {
+  const raw = String(process.env.SMTP_FROM || process.env.SMTP_USER || '').trim();
+  const bracketed = raw.match(/<([^>]+)>/);
+  const bare = raw.match(/[^\s<>"]+@[^\s<>"]+/);
+  const address = (bracketed?.[1] || bare?.[0] || raw).replace(/[<>"]/g, '').trim();
+  return { name: 'ThinkTrophy', address };
+}
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT || '587', 10),
@@ -50,7 +58,7 @@ async function sendVerificationEmail(to, username, token) {
 
   try {
     await transporter.sendMail({
-      from: `"ThinkTrophy" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+      from: mailFrom(),
       to,
       subject: 'Verify your ThinkTrophy account',
       html: wrapEmail(`
@@ -82,7 +90,7 @@ async function sendVerificationEmail(to, username, token) {
 async function sendPasswordResetEmail(to, name, otp) {
   try {
     await transporter.sendMail({
-      from: `"ThinkTrophy" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+      from: mailFrom(),
       to,
       subject: 'Reset your ThinkTrophy password',
       html: wrapEmail(`
@@ -117,7 +125,7 @@ async function sendPasswordResetEmail(to, name, otp) {
 async function sendActionEmail(to, name, subject, message) {
   try {
     await transporter.sendMail({
-      from: `"ThinkTrophy" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+      from: mailFrom(),
       to,
       subject,
       html: wrapEmail(`

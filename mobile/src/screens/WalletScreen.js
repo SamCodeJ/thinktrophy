@@ -131,7 +131,9 @@ export default function WalletScreen({ navigation, route }) {
   const [bankSearch, setBankSearch]       = useState('');
   const [paymentRef, setPaymentRef] = useState(null);
   const [paymentLink, setPaymentLink] = useState(null);
+  const paymentRefRef = useRef(null);
   const verifyingRef = useRef(false);
+  const [verifying, setVerifying] = useState(false);
 
   const balance      = walletData?.data?.balance || 0;
   const transactions = walletData?.data?.transactions || [];
@@ -156,6 +158,7 @@ export default function WalletScreen({ navigation, route }) {
         Alert.alert('Error', 'Failed to initialize payment. Please try again.');
         return;
       }
+      paymentRefRef.current = ref;
       setPaymentRef(ref);
       setPaymentLink(link);
       setDepositModal(false);
@@ -168,62 +171,91 @@ export default function WalletScreen({ navigation, route }) {
   async function confirmDeposit(txRef, { showCancelMessage = false } = {}) {
     if (!txRef || verifyingRef.current) return;
     verifyingRef.current = true;
+    setVerifying(true);
     setPaymentLink(null);
 
     let lastError = null;
-    for (let i = 0; i < 3; i++) {
+    // Bank transfer stays pending on Flutterwave for a while after checkout closes.
+    for (let i = 0; i < 6; i++) {
       try {
         const verified = await verifyPayment(txRef);
         qc.invalidateQueries({ queryKey: ['wallet'] });
         qc.invalidateQueries({ queryKey: ['profile'] });
         setDepositAmount('');
+        paymentRefRef.current = null;
         setPaymentRef(null);
         Alert.alert('Success', `${fmt(verified?.data?.amount)} credited to your wallet!`);
         verifyingRef.current = false;
+        setVerifying(false);
         return;
       } catch (e) {
         lastError = e;
-        if (i < 2) await sleep(2000);
+        const code = e?.error?.code;
+        const stillPending = code === 'TX_FAILED' || code === 'VERIFICATION_FAILED';
+        if (!stillPending) break;
+        if (i < 5) await sleep(3000);
       }
     }
 
     console.error('Verify payment error:', lastError);
     verifyingRef.current = false;
+    setVerifying(false);
+    const code = lastError?.error?.code;
+    const notCompleted = showCancelMessage && (code === 'TX_FAILED' || code === 'VERIFICATION_FAILED');
     Alert.alert(
-      showCancelMessage ? 'Checkout closed' : 'Verification pending',
-      lastError?.error?.message
-        || 'If you completed payment, your wallet will update shortly. If it does not, contact support with your payment reference.'
+      notCompleted ? 'Payment not completed' : 'Verification pending',
+      notCompleted
+        ? 'No successful payment was found. If you already transferred, wait a moment and check your wallet. Bank transfers can take a minute to confirm.'
+        : (lastError?.error?.message
+          || 'If you completed payment, your wallet will update shortly. Bank transfers can take a minute to confirm.')
     );
   }
 
-  const handleNavigationStateChange = async (navState) => {
-    if (!navState.url.includes('flutterwave.com/rn-redirect')) return;
-
+  function flutterwaveReturnParams(url) {
+    const marker = 'https://flutterwave.com/rn-redirect';
+    if (!url || !url.startsWith(marker)) return null;
     const params = {};
-    if (navState.url.includes('?')) {
-      const queryString = navState.url.split('?')[1];
-      queryString.split('&').forEach(p => {
-        const [k, v] = p.split('=');
-        params[k] = decodeURIComponent(v || '');
-      });
-    }
+    const q = url.indexOf('?');
+    if (q === -1) return params;
+    url.slice(q + 1).split('&').forEach(part => {
+      const eq = part.indexOf('=');
+      const rawKey = eq === -1 ? part : part.slice(0, eq);
+      const rawVal = eq === -1 ? '' : part.slice(eq + 1);
+      if (!rawKey) return;
+      try {
+        params[decodeURIComponent(rawKey)] = decodeURIComponent(rawVal);
+      } catch {
+        params[rawKey] = rawVal;
+      }
+    });
+    return params;
+  }
 
-    const txRef = paymentRef || params.tx_ref;
+  const handleNavigationStateChange = async (navState) => {
+    const params = flutterwaveReturnParams(navState.url);
+    if (!params) return;
+
+    const txRef = params.tx_ref || paymentRefRef.current || paymentRef;
     const status = String(params.status || '').toLowerCase();
-    const paid = status === 'successful' || status === 'completed' || status === 'success';
+    const failed = status === 'cancelled' || status === 'failed' || status === 'error';
 
-    if (paid || txRef) {
-      await confirmDeposit(txRef);
+    // Bank transfer often returns with no status, or with status=cancelled, before
+    // Flutterwave marks the charge successful. Always check the reference first.
+    if (txRef) {
+      await confirmDeposit(txRef, { showCancelMessage: failed });
       return;
     }
 
+    if (!failed) return;
+
     setPaymentLink(null);
+    paymentRefRef.current = null;
     setPaymentRef(null);
     Alert.alert('Payment Failed', 'Your payment was not successful or was cancelled.');
   };
 
   const closeCheckout = () => {
-    const ref = paymentRef;
+    const ref = paymentRefRef.current || paymentRef;
     setPaymentLink(null);
     if (ref) confirmDeposit(ref, { showCancelMessage: true });
   };
@@ -286,6 +318,20 @@ export default function WalletScreen({ navigation, route }) {
       );
     },
   });
+
+  if (verifying && !paymentLink) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.dark, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <ActivityIndicator color={colors.teal} size="large" />
+        <Text style={{ color: colors.light, fontSize: 16, fontWeight: '700', marginTop: 18, textAlign: 'center' }}>
+          Confirming your payment
+        </Text>
+        <Text style={{ color: colors.white50, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
+          Bank transfers can take a minute. Keep this screen open.
+        </Text>
+      </SafeAreaView>
+    );
+  }
 
   if (paymentLink) {
     return (

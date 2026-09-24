@@ -1,26 +1,40 @@
 import * as SecureStore from 'expo-secure-store';
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { Alert } from 'react-native';
 import { getProfile } from '../api';
+import { setSessionExpiredHandler, markSessionStarted } from '../api/client';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
+  const userRef = useRef(null);
+  userRef.current = user;
 
   useEffect(() => {
+    setSessionExpiredHandler(() => {
+      if (userRef.current) {
+        Alert.alert('Session expired', 'Please sign in again.');
+      }
+      setUser(null);
+    });
     restoreSession();
+    return () => setSessionExpiredHandler(null);
   }, []);
 
   async function restoreSession() {
     try {
-      const token = await SecureStore.getItemAsync('access_token');
-      if (token) {
+      const accessToken = await SecureStore.getItemAsync('access_token');
+      const refreshToken = await SecureStore.getItemAsync('refresh_token');
+      if (accessToken || refreshToken) {
         const res = await getProfile();
+        markSessionStarted();
         setUser(res.data);
       }
     } catch {
       await clearTokens();
+      setUser(null);
     } finally {
       setLoading(false);
     }
@@ -38,6 +52,7 @@ export function AuthProvider({ children }) {
 
   async function signIn(accessToken, refreshToken, userData) {
     await saveTokens(accessToken, refreshToken);
+    markSessionStarted();
     setUser(userData);
   }
 

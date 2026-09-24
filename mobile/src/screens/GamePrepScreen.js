@@ -14,6 +14,7 @@ const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFract
 function instructionList(seconds) {
   const secs = Number(seconds) > 0 ? Number(seconds) : 60;
   return [
+    { icon: '📶', text: 'Make sure you have a good internet connection.' },
     { icon: '📝', text: 'You will answer 10 questions drawn from the 7 categories you selected.' },
     {
       icon: '⏱️',
@@ -25,6 +26,7 @@ function instructionList(seconds) {
     },
     { icon: '✅', text: 'Tap an answer once. You cannot change it after you select.' },
     { icon: '🎯', text: 'Score 9/10 or 10/10 to win. 8 or below forfeits your stake.' },
+    { icon: '⚠️', text: 'Any form of malpractice will result in disqualification.' },
     { icon: '📵', text: 'Stay in the app until the game ends. Closing it can end the session and lose your stake.' },
   ];
 }
