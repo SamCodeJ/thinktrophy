@@ -130,7 +130,7 @@ export default function Settings() {
             <div>
               <label className="block text-sm text-white/60 mb-1.5">Referral Win Percentage</label>
               <input className="input" type="number" min="0" step="0.01" max="1" value={form.referral_win_percentage} onChange={e => set('referral_win_percentage', e.target.value)} disabled={!canEditEconomy} />
-              <p className="text-xs text-white/30 mt-1">Percentage of a player's first profit that goes to their referrer (e.g., 0.10 for 10%)</p>
+              <p className="text-xs text-white/30 mt-1">Share of the referred player's first taxable win paid to their referrer. A 10/10 uses the profit above the stake. A 9/10 uses the amount returned. Example: 0.10 for 10%.</p>
             </div>
           </div>
         </div>

@@ -1,5 +1,5 @@
 const { getCategoriesForUser } = require('../services/questionService');
-const { createSession, submitAnswer, getSessionResult } = require('../services/gameService');
+const { createSession, submitAnswer, getSessionResult, expireSession } = require('../services/gameService');
 const { query } = require('../db/connection');
 const { AppError } = require('../middleware/errorHandler');
 
@@ -106,14 +106,8 @@ async function getResult(req, res, next) {
 async function abandonSession(req, res, next) {
   try {
     const { sessionId } = req.params;
-    const result = await query(
-      `UPDATE game_sessions
-       SET status = 'expired', completed_at = NOW()
-       WHERE id = $1 AND user_id = $2 AND status = 'active'
-       RETURNING id, stake_amount`,
-      [sessionId, req.user.userId]
-    );
-    if (!result.rows[0])
+    const session = await expireSession(sessionId, req.user.userId);
+    if (!session)
       throw new AppError('No active session found', 404, 'NOT_FOUND');
 
     // Stake is forfeited — already deducted at session creation, no refund

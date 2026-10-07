@@ -3,6 +3,7 @@ const { AppError } = require('../middleware/errorHandler');
 const { v4: uuidv4 } = require('uuid');
 const { sendActionEmail } = require('../utils/emailService');
 const { formatNaira } = require('../utils/formatNaira');
+const { depositCollectionFee } = require('./accounting');
 const axios = require('axios');
 const crypto = require('crypto');
 // No need for a custom httpsAgent for Flutterwave, as it was working previously and causes EPROTO errors
@@ -328,7 +329,8 @@ async function verifyDeposit(userId, txRef, { flwId } = {}) {
 
     const zohoService = require('./zohoService');
     const zohoRef = tx.status === 'verified' ? `${tx.reference}-ADJ` : tx.reference;
-    zohoService.syncDeposit(ownerId, creditAmount, zohoRef)
+    const feeAmount = depositCollectionFee(creditAmount, process.env.DEPOSIT_FEE_RATE);
+    zohoService.syncDeposit(ownerId, creditAmount, zohoRef, { feeAmount })
       .catch(err => console.error('Failed to sync deposit to Zoho Books:', err));
 
     notifyDepositSuccess(walletRes.rows[0], creditAmount);
@@ -387,12 +389,9 @@ async function requestWithdrawal(userId, amount, accountDetails) {
     throw new AppError('Invalid withdrawal amount', 400, 'INVALID_AMOUNT');
   }
 
-  const withdrawalFee = roundMoney(process.env.WITHDRAWAL_FEE || '50');
-  if (withdrawalAmount <= withdrawalFee) {
-    throw new AppError(`Minimum withdrawal must be greater than the ${formatNaira(withdrawalFee)} fee`, 400, 'AMOUNT_TOO_LOW');
-  }
-
-  const transferAmount = roundMoney(withdrawalAmount - withdrawalFee);
+  // Flutterwave's transfer fee is charged to the user by Flutterwave.
+  // ThinkTrophy sends the full withdrawal and does not keep a fee.
+  const transferAmount = withdrawalAmount;
   const reference = `WD-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`;
   const client = await getClient();
   let user;
@@ -439,7 +438,7 @@ async function requestWithdrawal(userId, amount, accountDetails) {
        VALUES ($1, 'withdrawal', $2, 'pending', $3, $4)`,
       [userId, withdrawalAmount, reference, JSON.stringify({
         ...accountDetails,
-        fee: withdrawalFee,
+        fee: 0,
         transfer_amount: transferAmount,
       })]
     );
@@ -501,7 +500,7 @@ async function requestWithdrawal(userId, amount, accountDetails) {
   }
 
   const zohoService = require('./zohoService');
-  zohoService.syncWithdrawalRequest(userId, withdrawalAmount, withdrawalFee, reference)
+  zohoService.syncWithdrawalRequest(userId, withdrawalAmount, 0, reference)
     .catch(err => console.error('Failed to sync withdrawal request to Zoho Books:', err));
 
   if (user && user.email) {

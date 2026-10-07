@@ -15,7 +15,6 @@ import { colors } from '../utils/theme';
 import { getWallet, getProfile, deposit, verifyPayment, withdraw, getBanks, resolveAccount } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const WITHDRAWAL_FEE = 50;
 
 function parseWithdrawAmount(raw) {
   const n = parseFloat(String(raw || '').replace(/,/g, '').trim());
@@ -282,7 +281,7 @@ export default function WalletScreen({ navigation, route }) {
   const withdrawAmount = parseWithdrawAmount(withdrawForm.amount);
   const withdrawReady = Boolean(
     Number.isFinite(withdrawAmount)
-    && withdrawAmount > WITHDRAWAL_FEE
+    && withdrawAmount > 0
     && withdrawAmount <= balance
     && withdrawForm.account_number.length === 10
     && withdrawForm.account_name
@@ -481,7 +480,7 @@ export default function WalletScreen({ navigation, route }) {
                   onChangeText={v => setWithdrawForm(x => ({ ...x, amount: v.replace(/,/g, '') }))}
                 />
                 <Text style={{ color: colors.white50, fontSize: 12, marginTop: 6 }}>
-                  A {fmt(WITHDRAWAL_FEE)} processing fee is deducted. You must withdraw more than {fmt(WITHDRAWAL_FEE)}.
+                  The full amount leaves your wallet. Flutterwave may charge its own transfer fee.
                 </Text>
               </View>
 

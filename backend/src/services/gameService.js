@@ -5,6 +5,7 @@ const { AppError } = require('../middleware/errorHandler');
 const { sendActionEmail } = require('../utils/emailService');
 const { formatNaira } = require('../utils/formatNaira');
 const cache = require('../utils/cache');
+const { settlementLegs, computeReferralBonus } = require('./accounting');
 
 async function getPlatformSettings() {
   const cached = await cache.get('platform_settings');
@@ -80,13 +81,15 @@ async function createSession(userId, categoryIds, stakeAmount) {
     if (parseFloat(wallet.rows[0].wallet_balance) < stakeAmount)
       throw new AppError('Insufficient wallet balance', 400, 'INSUFFICIENT_BALANCE');
 
-    // Auto-expire any stale active sessions older than 2 minutes before checking
-    await client.query(
+    // Auto-expire any stale active sessions older than 2 minutes before checking.
+    // Their stakes were already journaled to Stakes Held and must be forfeited after commit.
+    const expiredRes = await client.query(
       `UPDATE game_sessions
        SET status = 'expired', completed_at = NOW()
        WHERE user_id = $1
          AND status = 'active'
-         AND started_at < NOW() - INTERVAL '2 minutes'`,
+         AND started_at < NOW() - INTERVAL '2 minutes'
+       RETURNING id, user_id, stake_amount`,
       [userId]
     );
 
@@ -154,6 +157,16 @@ async function createSession(userId, categoryIds, stakeAmount) {
     await client.query('COMMIT');
 
     const zohoService = require('./zohoService');
+    for (const expired of expiredRes.rows) {
+      zohoService.syncGameSettlement(expired.user_id, {
+        gameId: expired.id,
+        stake: parseFloat(expired.stake_amount),
+        grossPayout: 0,
+        taxAmount: 0,
+        netAmount: 0,
+        reason: 'forfeit',
+      }).catch(err => console.error('Failed to sync forfeited stake to Zoho Books:', err));
+    }
     zohoService.syncStake(userId, stakeAmount, `SESSION-${sessionId}`)
       .catch(err => console.error('Failed to sync stake to Zoho Books:', err));
 
@@ -293,6 +306,7 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
 
       let userEmail = null;
       let userName = null;
+      let referralSync = null;
       
       if (payout > 0) {
         const profit = roundMoney(payout - stake);
@@ -317,16 +331,6 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
           [userId, payout, sessionId]
         );
         
-        const zohoService = require('./zohoService');
-        zohoService.syncPayout(userId, payout, sessionId, {
-          taxAmount,
-          netAmount: netPayout,
-          score: newScore,
-          taxableWinnings,
-          stake,
-        })
-          .catch(err => console.error('Failed to sync payout to Zoho Books:', err));
-
         // Log the tax deduction transaction if applicable
         if (taxAmount > 0) {
           await client.query(
@@ -340,23 +344,23 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
           );
         }
 
-        // Handle referral bonus (only on the referred user's first win)
-        if (isFirstWin && referredBy && settings.referralWinPercentage > 0) {
-          if (profit > 0) {
-            const bonus = profit * settings.referralWinPercentage;
-            await client.query(
-              'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
-              [bonus, referredBy]
-            );
-            await client.query(
-              `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
-               VALUES ($1, 'referral_bonus', $2, 'verified', $3, $4)`,
-              [referredBy, bonus, sessionId, JSON.stringify({ referred_user_id: userId, profit_amount: profit })]
-            );
-            
-            zohoService.syncReferralBonus(referredBy, bonus, sessionId)
-              .catch(err => console.error('Failed to sync referral bonus to Zoho Books:', err));
-          }
+        // Referral is 10% of the first taxable win, including a 9/10 return.
+        const bonus = computeReferralBonus(taxableWinnings, settings.referralWinPercentage);
+        if (isFirstWin && referredBy && bonus > 0) {
+          await client.query(
+            'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
+            [bonus, referredBy]
+          );
+          await client.query(
+            `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
+             VALUES ($1, 'referral_bonus', $2, 'verified', $3, $4)`,
+            [referredBy, bonus, sessionId, JSON.stringify({
+              referred_user_id: userId,
+              taxable_winnings: taxableWinnings,
+              profit_amount: profit,
+            })]
+          );
+          referralSync = { referredBy, bonus, sessionId };
         }
       }
 
@@ -380,7 +384,22 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
       }
 
       await client.query('COMMIT');
-      
+
+      const zohoService = require('./zohoService');
+      zohoService.syncGameSettlement(userId, {
+        gameId: sessionId,
+        stake,
+        grossPayout: payout,
+        taxAmount,
+        netAmount: netPayout,
+        score: newScore,
+      }).catch(err => console.error('Failed to sync game settlement to Zoho Books:', err));
+
+      if (referralSync) {
+        zohoService.syncReferralBonus(referralSync.referredBy, referralSync.bonus, referralSync.sessionId)
+          .catch(err => console.error('Failed to sync referral bonus to Zoho Books:', err));
+      }
+
       // Send winning email notification (non-blocking)
       if (payout > 0 && userEmail) {
         sendActionEmail(
@@ -468,23 +487,47 @@ function computeWinTax(taxableWinnings, taxRate) {
   return roundMoney(taxableWinnings * taxRate);
 }
 
-async function expireSession(sessionId) {
+async function expireSession(sessionId, userId) {
+  const params = [sessionId];
+  let userClause = '';
+  if (userId) {
+    params.push(userId);
+    userClause = ` AND user_id = $${params.length}`;
+  }
   const sess = await query(
     `SELECT user_id, current_question_index, active_track,
-            question_ids_track_a, question_ids_track_b
-     FROM game_sessions WHERE id = $1 AND status = 'active'`,
-    [sessionId]
+            question_ids_track_a, question_ids_track_b, stake_amount
+     FROM game_sessions WHERE id = $1 AND status = 'active'${userClause}`,
+    params
   );
   const session = sess.rows[0];
-  if (session) {
-    const track = session.active_track === 'a' ? session.question_ids_track_a : session.question_ids_track_b;
-    const shownCount = Math.max((session.current_question_index || 0) + 1, 1);
-    await markQuestionsSeen(session.user_id, (track || []).slice(0, shownCount));
-  }
-  await query(
-    `UPDATE game_sessions SET status = 'expired', completed_at = NOW() WHERE id = $1 AND status = 'active'`,
-    [sessionId]
+  if (!session) return null;
+
+  const track = session.active_track === 'a' ? session.question_ids_track_a : session.question_ids_track_b;
+  const shownCount = Math.max((session.current_question_index || 0) + 1, 1);
+  await markQuestionsSeen(session.user_id, (track || []).slice(0, shownCount));
+
+  const expired = await query(
+    `UPDATE game_sessions
+     SET status = 'expired', completed_at = NOW()
+     WHERE id = $1 AND status = 'active'${userClause}
+     RETURNING id, user_id, stake_amount`,
+    params
   );
+  const row = expired.rows[0];
+  if (!row) return null;
+
+  const zohoService = require('./zohoService');
+  zohoService.syncGameSettlement(row.user_id, {
+    gameId: row.id,
+    stake: parseFloat(row.stake_amount),
+    grossPayout: 0,
+    taxAmount: 0,
+    netAmount: 0,
+    reason: 'forfeit',
+  }).catch(err => console.error('Failed to sync forfeited stake to Zoho Books:', err));
+
+  return row;
 }
 
 async function getSessionResult(sessionId, userId) {
@@ -499,6 +542,111 @@ async function getSessionResult(sessionId, userId) {
   const session = result.rows[0];
   if (session.status === 'active') throw new AppError('Game session is still in progress', 400, 'SESSION_ACTIVE');
   return session;
+}
+
+async function reconcileReferral(client, { refereeId, sessionId, settings }) {
+  const userRes = await client.query('SELECT referred_by FROM users WHERE id = $1', [refereeId]);
+  const referrerId = userRes.rows[0]?.referred_by;
+  if (!referrerId) return [];
+
+  const firstWin = await client.query(
+    `SELECT id, stake_amount, payout_amount
+     FROM game_sessions
+     WHERE user_id = $1 AND status = 'completed' AND COALESCE(payout_amount, 0) > 0
+     ORDER BY completed_at ASC, id ASC
+     LIMIT 1`,
+    [refereeId]
+  );
+  const first = firstWin.rows[0];
+  const desiredBonus = first
+    ? computeReferralBonus(
+        computeTaxableWinnings(parseFloat(first.payout_amount), parseFloat(first.stake_amount)),
+        settings.referralWinPercentage
+      )
+    : 0;
+  const desiredSessionId = first?.id || sessionId;
+
+  const existingRes = await client.query(
+    `SELECT id, user_id, amount, game_session_id
+     FROM transactions
+     WHERE type = 'referral_bonus'
+       AND (
+         metadata->>'referred_user_id' = $1
+         OR game_session_id IN (SELECT id FROM game_sessions WHERE user_id = $1)
+       )
+     FOR UPDATE`,
+    [String(refereeId)]
+  );
+  const existing = existingRes.rows;
+
+  const deltas = new Map();
+  const addDelta = (userId, amount) => {
+    deltas.set(userId, roundMoney((deltas.get(userId) || 0) + amount));
+  };
+  for (const row of existing) addDelta(row.user_id, roundMoney(-parseFloat(row.amount)));
+  if (desiredBonus > 0) addDelta(referrerId, desiredBonus);
+
+  for (const [userId, delta] of deltas) {
+    if (delta === 0) continue;
+    if (delta < 0) {
+      const balRes = await client.query(
+        'SELECT wallet_balance FROM users WHERE id = $1 FOR UPDATE',
+        [userId]
+      );
+      const balance = parseFloat(balRes.rows[0]?.wallet_balance || 0);
+      if (balance + delta < -0.001) {
+        throw new AppError(
+          `Cannot reverse referral bonus of ₦${Math.abs(delta).toFixed(2)} — referrer wallet balance is only ₦${balance.toFixed(2)}`,
+          400,
+          'INSUFFICIENT_BALANCE'
+        );
+      }
+    }
+    await client.query(
+      'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
+      [delta, userId]
+    );
+  }
+
+  const taxable = first
+    ? computeTaxableWinnings(parseFloat(first.payout_amount), parseFloat(first.stake_amount))
+    : 0;
+  const correctionMeta = {
+    dispute_correction: true,
+    taxable_winnings: taxable,
+    referred_user_id: refereeId,
+  };
+
+  const holders = existing.filter(row => row.game_session_id === desiredSessionId);
+  if (desiredBonus > 0 && holders[0]) {
+    await client.query(
+      `UPDATE transactions
+       SET user_id = $1, amount = $2, metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
+       WHERE id = $4`,
+      [referrerId, desiredBonus, JSON.stringify(correctionMeta), holders[0].id]
+    );
+  } else if (desiredBonus > 0) {
+    await client.query(
+      `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
+       VALUES ($1, 'referral_bonus', $2, 'verified', $3, $4)`,
+      [referrerId, desiredBonus, desiredSessionId, JSON.stringify(correctionMeta)]
+    );
+  }
+
+  for (const row of existing) {
+    if (desiredBonus > 0 && holders[0] && row.id === holders[0].id) continue;
+    if (roundMoney(parseFloat(row.amount)) === 0 && row.game_session_id !== desiredSessionId) continue;
+    await client.query(
+      `UPDATE transactions
+       SET amount = 0, metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+       WHERE id = $2`,
+      [JSON.stringify({ dispute_correction: true, superseded_by_session: desiredSessionId }), row.id]
+    );
+  }
+
+  return [...deltas.entries()]
+    .filter(([, delta]) => delta !== 0)
+    .map(([userId, delta]) => ({ userId, delta }));
 }
 
 /**
@@ -569,6 +717,16 @@ async function correctSessionGrade(sessionId, questionId, isCorrect) {
       [isCorrect ? 1 : -1, questionId]
     );
 
+    const oldLegs = settlementLegs({ stake, grossPayout: oldGross, taxAmount: oldTax, netAmount: oldNet });
+    const newLegs = settlementLegs({ stake, grossPayout: newGross, taxAmount: newTax, netAmount: newNet });
+    const winningsDelta = roundMoney(newLegs.winningsExpense - oldLegs.winningsExpense);
+    const revenueDelta = roundMoney(newLegs.forfeitedRevenue - oldLegs.forfeitedRevenue);
+    const referralAdjustments = await reconcileReferral(client, {
+      refereeId: session.user_id,
+      sessionId,
+      settings,
+    });
+
     if (deltaNet !== 0 || deltaGross !== 0) {
       // Guard clawback against insufficient wallet balance
       if (deltaNet < 0) {
@@ -636,11 +794,12 @@ async function correctSessionGrade(sessionId, questionId, isCorrect) {
 
     await client.query('COMMIT');
 
-    if (deltaGross !== 0 || deltaTax !== 0) {
-      const zohoService = require('./zohoService');
+    const zohoService = require('./zohoService');
+    if (winningsDelta !== 0 || revenueDelta !== 0 || deltaTax !== 0 || deltaNet !== 0) {
       zohoService.syncPayoutCorrection(session.user_id, {
         gameId: sessionId,
-        grossDelta: deltaGross,
+        winningsDelta,
+        revenueDelta,
         taxDelta: deltaTax,
         netDelta: deltaNet,
         score: newScore,
@@ -648,6 +807,14 @@ async function correctSessionGrade(sessionId, questionId, isCorrect) {
         taxableWinnings,
       }).catch(err => console.error('Failed to sync dispute correction to Zoho Books:', err));
     }
+    referralAdjustments.forEach((adj, index) => {
+      zohoService.syncReferralBonus(
+        adj.userId,
+        Math.abs(adj.delta),
+        `CORR-${sessionId}-${Date.now()}-${index}`,
+        { reversal: adj.delta < 0 }
+      ).catch(err => console.error('Failed to sync referral correction to Zoho Books:', err));
+    });
 
     return {
       sessionId,
