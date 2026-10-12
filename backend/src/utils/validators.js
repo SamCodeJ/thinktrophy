@@ -118,6 +118,16 @@ const settingsSchema = z.object({
   kiosk_warning_count: z.number().int().min(1).optional(),
   referral_win_percentage: z.number().min(0).max(1).optional(),
   user_win_tax_percentage: z.number().min(0).max(1).optional(),
+  min_withdrawal:   z.number().positive().optional(),
+  max_withdrawal:   z.number().positive().optional(),
+}).superRefine((data, ctx) => {
+  if (data.min_withdrawal != null && data.max_withdrawal != null && data.min_withdrawal > data.max_withdrawal) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Minimum withdrawal cannot be greater than the maximum withdrawal',
+      path: ['min_withdrawal'],
+    });
+  }
 });
 
 const forgotPasswordSchema = z.object({

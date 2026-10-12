@@ -264,6 +264,14 @@ CREATE INDEX IF NOT EXISTS idx_webhook_logs_provider ON webhook_logs(provider);
 CREATE INDEX IF NOT EXISTS idx_webhook_logs_event_type ON webhook_logs(event_type);
 CREATE INDEX IF NOT EXISTS idx_webhook_logs_date ON webhook_logs(created_at);
 
+INSERT INTO platform_settings (key, value)
+VALUES ('min_withdrawal', '500.00'), ('max_withdrawal', '20000.00')
+ON CONFLICT (key) DO NOTHING;
+
+UPDATE platform_settings
+SET value = '500.00', updated_at = NOW()
+WHERE key = 'min_withdrawal' AND value IN ('5000.00', '5000');
+
 CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email));
 CREATE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_users_verification_token_hash ON users(verification_token_hash);

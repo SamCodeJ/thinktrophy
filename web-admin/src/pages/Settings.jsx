@@ -13,7 +13,7 @@ export default function Settings() {
 
   const { data, isLoading } = useQuery({ queryKey: ['settings'], queryFn: getSettings });
   const [form, setForm] = useState({
-    min_stake: '', max_stake: '', payout_perfect: '',
+    min_stake: '', max_stake: '', min_withdrawal: '', max_withdrawal: '', payout_perfect: '',
     payout_nine: '', game_duration: '', platform_name: '', platform_tagline: '',
     kiosk_mode: false, kiosk_warning_count: 1, referral_win_percentage: '', user_win_tax_percentage: '',
   });
@@ -24,6 +24,8 @@ export default function Settings() {
       setForm({
         min_stake:            s.min_stake            || '200',
         max_stake:            s.max_stake            || '50000',
+        min_withdrawal:       s.min_withdrawal       || '500',
+        max_withdrawal:       s.max_withdrawal       || '20000',
         payout_perfect:       s.payout_perfect       || '2.0',
         payout_nine:          s.payout_nine          || '0.5',
         game_duration:        s.game_duration        || '60',
@@ -49,6 +51,8 @@ export default function Settings() {
       if (canEditEconomy) {
         payload.min_stake = parseFloat(form.min_stake);
         payload.max_stake = parseFloat(form.max_stake);
+        payload.min_withdrawal = parseFloat(form.min_withdrawal);
+        payload.max_withdrawal = parseFloat(form.max_withdrawal);
         payload.payout_perfect = parseFloat(form.payout_perfect);
         payload.payout_nine = parseFloat(form.payout_nine);
         payload.referral_win_percentage = parseFloat(form.referral_win_percentage);
@@ -85,6 +89,21 @@ export default function Settings() {
               <input className="input" type="number" min="1" step="1" value={form.max_stake} onChange={e => set('max_stake', e.target.value)} disabled={!canEditEconomy} />
             </div>
           </div>
+        </div>
+
+        <div className="border-t border-white/5 pt-6">
+          <h2 className="text-sm font-semibold text-white/60 uppercase tracking-wider mb-4">Withdrawal Limits</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">Minimum Withdrawal (₦)</label>
+              <input className="input" type="number" min="1" step="1" value={form.min_withdrawal} onChange={e => set('min_withdrawal', e.target.value)} disabled={!canEditEconomy} />
+            </div>
+            <div>
+              <label className="block text-sm text-white/60 mb-1.5">Maximum Withdrawal (₦)</label>
+              <input className="input" type="number" min="1" step="1" value={form.max_withdrawal} onChange={e => set('max_withdrawal', e.target.value)} disabled={!canEditEconomy} />
+            </div>
+          </div>
+          <p className="text-xs text-white/30 mt-2">A withdrawal must be within this range and cannot exceed the wallet balance.</p>
         </div>
 
         <div className="border-t border-white/5 pt-6">

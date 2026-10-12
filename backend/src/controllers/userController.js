@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { query } = require('../db/connection');
 const { AppError } = require('../middleware/errorHandler');
+const { reconcilePendingWithdrawals } = require('../services/paymentService');
 
 async function getProfile(req, res, next) {
   try {
@@ -49,6 +50,9 @@ async function getProfile(req, res, next) {
 
 async function getWallet(req, res, next) {
   try {
+    await reconcilePendingWithdrawals(req.user.userId).catch(err => {
+      console.error('Pending withdrawal reconcile failed:', err.message);
+    });
     const balanceRes = await query(
       'SELECT wallet_balance FROM users WHERE id = $1',
       [req.user.userId]

@@ -983,10 +983,12 @@ async function deleteTestimonial(req, res, next) {
 const PUBLIC_SETTING_KEYS = [
   'kiosk_mode', 'kiosk_warning_count', 'platform_name', 'platform_tagline',
   'user_win_tax_percentage', 'payout_perfect', 'payout_nine', 'game_duration',
+  'min_withdrawal', 'max_withdrawal',
 ];
 const SUPER_ADMIN_SETTING_KEYS = [
   'min_stake', 'max_stake', 'payout_perfect', 'payout_nine',
   'referral_win_percentage', 'user_win_tax_percentage',
+  'min_withdrawal', 'max_withdrawal',
 ];
 
 async function getPublicSettings(req, res, next) {
@@ -1016,7 +1018,7 @@ async function updateSettings(req, res, next) {
     const updates = req.body;
     const economyKeys = Object.keys(updates).filter(k => SUPER_ADMIN_SETTING_KEYS.includes(k));
     if (economyKeys.length && req.admin.role !== 'super_admin') {
-      throw new AppError('Only a super admin can change payout, stake, or tax settings', 403, 'FORBIDDEN');
+      throw new AppError('Only a super admin can change payout, stake, tax, or withdrawal settings', 403, 'FORBIDDEN');
     }
     for (const [key, value] of Object.entries(updates)) {
       await query(

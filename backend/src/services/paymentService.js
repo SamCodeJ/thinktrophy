@@ -373,7 +373,69 @@ function isFlwTransferSuccessStatus(status) {
 
 function isFlwTransferFailedStatus(status) {
   const s = String(status || '').toUpperCase();
-  return s === 'FAILED' || s === 'FAILURE' || s === 'CANCELLED';
+  return s === 'FAILED' || s === 'FAILURE' || s === 'CANCELLED' || s === 'REVERSED';
+}
+
+function isFlwTransferInFlightStatus(status) {
+  const s = String(status || '').toUpperCase();
+  return s === 'NEW' || s === 'PENDING' || s === 'PENDING_APPROVAL' || s === 'PROCESSING';
+}
+
+async function fetchFlutterwaveTransfer(reference) {
+  const listed = await axios.get('https://api.flutterwave.com/v3/transfers', {
+    headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` },
+    params: { reference },
+    timeout: 20000,
+  });
+  if (String(listed.data?.status || '').toLowerCase() !== 'success') return undefined;
+  const rows = Array.isArray(listed.data?.data) ? listed.data.data : [];
+  return rows.find(row => String(row.reference) === String(reference)) || null;
+}
+
+// A pending row with no Flutterwave transfer is a timed-out request that never left.
+// Leave recent rows alone so a transfer that is still being created is not refunded twice.
+const STALE_MISSING_TRANSFER_MS = 10 * 60 * 1000;
+
+async function reconcilePendingWithdrawals(userId) {
+  if (!process.env.FLW_SECRET_KEY) return;
+  const pending = await query(
+    `SELECT id, user_id, amount, reference, created_at
+     FROM transactions
+     WHERE user_id = $1 AND type = 'withdrawal' AND status = 'pending'
+     ORDER BY created_at ASC`,
+    [userId]
+  );
+
+  for (const tx of pending.rows) {
+    let transfer;
+    try {
+      transfer = await fetchFlutterwaveTransfer(tx.reference);
+    } catch (err) {
+      console.error('Flutterwave transfer lookup failed', tx.reference, err.response?.data || err.message);
+      continue;
+    }
+    if (transfer === undefined) continue;
+
+    if (!transfer) {
+      const ageMs = Date.now() - new Date(tx.created_at).getTime();
+      if (ageMs < STALE_MISSING_TRANSFER_MS) continue;
+      await query(
+        `UPDATE transactions
+         SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+         WHERE id = $2 AND type = 'withdrawal' AND status = 'pending'`,
+        [JSON.stringify({ gateway_error: 'No Flutterwave transfer found for this reference' }), tx.id]
+      );
+      await handleTransferCompleted({ reference: tx.reference, status: 'FAILED' });
+      continue;
+    }
+
+    const status = String(transfer.status || '').toUpperCase();
+    if (isFlwTransferSuccessStatus(status) || isFlwTransferFailedStatus(status)) {
+      await handleTransferCompleted({ reference: tx.reference, status, id: transfer.id });
+    } else if (!isFlwTransferInFlightStatus(status)) {
+      console.error('Unhandled Flutterwave transfer status', tx.reference, status);
+    }
+  }
 }
 
 async function requestWithdrawal(userId, amount, accountDetails) {
@@ -389,10 +451,20 @@ async function requestWithdrawal(userId, amount, accountDetails) {
     throw new AppError('Invalid withdrawal amount', 400, 'INVALID_AMOUNT');
   }
 
+  const { getPlatformSettings } = require('./gameService');
+  const settings = await getPlatformSettings();
+  if (withdrawalAmount < settings.minWithdrawal) {
+    throw new AppError(`Minimum withdrawal is ${formatNaira(settings.minWithdrawal)}`, 400, 'AMOUNT_TOO_LOW');
+  }
+  if (withdrawalAmount > settings.maxWithdrawal) {
+    throw new AppError(`Maximum withdrawal is ${formatNaira(settings.maxWithdrawal)}`, 400, 'AMOUNT_TOO_HIGH');
+  }
+
   // Flutterwave's transfer fee is charged to the user by Flutterwave.
   // ThinkTrophy sends the full withdrawal and does not keep a fee.
   const transferAmount = withdrawalAmount;
   const reference = `WD-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`;
+  await reconcilePendingWithdrawals(userId);
   const client = await getClient();
   let user;
 
@@ -410,14 +482,14 @@ async function requestWithdrawal(userId, amount, accountDetails) {
     }
 
     const pendingRes = await client.query(
-      `SELECT id FROM transactions
+      `SELECT id, amount FROM transactions
        WHERE user_id = $1 AND type = 'withdrawal' AND status = 'pending'
        LIMIT 1`,
       [userId]
     );
     if (pendingRes.rowCount) {
       throw new AppError(
-        'You already have a withdrawal in progress. Please wait for it to complete or fail before requesting another.',
+        `A withdrawal of ${formatNaira(pendingRes.rows[0].amount)} is still being processed. You can request another after it reaches your bank or returns to your wallet.`,
         409,
         'WITHDRAWAL_PENDING'
       );
@@ -665,4 +737,4 @@ async function resolveAccount(account_number, bank_code) {
   }
 }
 
-module.exports = { initiateDeposit, verifyDeposit, requestWithdrawal, handleWebhook, getBanks, resolveAccount };
+module.exports = { initiateDeposit, verifyDeposit, requestWithdrawal, handleWebhook, getBanks, resolveAccount, reconcilePendingWithdrawals };

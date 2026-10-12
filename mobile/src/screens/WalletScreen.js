@@ -12,7 +12,7 @@ import { format } from 'date-fns';
 import { WebView } from 'react-native-webview';
 import { colors } from '../utils/theme';
 import { useKeyboardOverlap } from '../hooks/useKeyboardOverlap';
-import { getWallet, getProfile, deposit, verifyPayment, withdraw, getBanks, resolveAccount } from '../api';
+import { getWallet, getProfile, deposit, verifyPayment, withdraw, getBanks, resolveAccount, getPublicSettings } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -85,6 +85,7 @@ export default function WalletScreen({ navigation, route }) {
   const { data: walletData, isLoading } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
   useQuery({ queryKey: ['profile'], queryFn: getProfile });
   const { data: banksData, isLoading: loadingBanks } = useQuery({ queryKey: ['banks'], queryFn: getBanks });
+  const { data: settingsData } = useQuery({ queryKey: ['public-settings'], queryFn: getPublicSettings });
 
   const [depositModal, setDepositModal]   = useState(false);
   const [withdrawModal, setWithdrawModal] = useState(false);
@@ -252,10 +253,13 @@ export default function WalletScreen({ navigation, route }) {
     }
   }, [withdrawForm.account_number, withdrawForm.bank_code]);
 
+  const minWithdrawal = parseFloat(settingsData?.data?.min_withdrawal) || 500;
+  const maxWithdrawal = parseFloat(settingsData?.data?.max_withdrawal) || 20000;
   const withdrawAmount = parseWithdrawAmount(withdrawForm.amount);
+  const withdrawInRange = withdrawAmount >= minWithdrawal && withdrawAmount <= maxWithdrawal;
   const withdrawReady = Boolean(
     Number.isFinite(withdrawAmount)
-    && withdrawAmount > 0
+    && withdrawInRange
     && withdrawAmount <= balance
     && withdrawForm.account_number.length === 10
     && withdrawForm.account_name
@@ -454,8 +458,20 @@ export default function WalletScreen({ navigation, route }) {
                   onChangeText={v => setWithdrawForm(x => ({ ...x, amount: v.replace(/,/g, '') }))}
                 />
                 <Text style={{ color: colors.white50, fontSize: 12, marginTop: 6 }}>
-                  The full amount leaves your wallet. Flutterwave may charge its own transfer fee.
+                  Withdraw between {fmt(minWithdrawal)} and {fmt(maxWithdrawal)}. The full amount leaves your wallet. Flutterwave may charge its own transfer fee.
                 </Text>
+                {Number.isFinite(withdrawAmount) && withdrawAmount > 0 && !withdrawInRange && (
+                  <Text style={{ color: colors.red, fontSize: 12, marginTop: 6 }}>
+                    {withdrawAmount < minWithdrawal
+                      ? `Minimum withdrawal is ${fmt(minWithdrawal)}.`
+                      : `Maximum withdrawal is ${fmt(maxWithdrawal)}.`}
+                  </Text>
+                )}
+                {Number.isFinite(withdrawAmount) && withdrawInRange && withdrawAmount > balance && (
+                  <Text style={{ color: colors.red, fontSize: 12, marginTop: 6 }}>
+                    This is more than your available balance of {fmt(balance)}.
+                  </Text>
+                )}
               </View>
 
               <View style={{ marginBottom: 12 }}>

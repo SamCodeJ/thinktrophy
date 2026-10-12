@@ -178,6 +178,8 @@ async function seed() {
     const defaults = [
       ['min_stake',       '500.00'],
       ['max_stake',       '5000.00'],
+      ['min_withdrawal',  '500.00'],
+      ['max_withdrawal',  '20000.00'],
       ['payout_perfect',  '2.0'],
       ['payout_nine',     '0.5'],
       ['game_duration',   '60'],

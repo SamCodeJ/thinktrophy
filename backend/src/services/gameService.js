@@ -17,6 +17,8 @@ async function getPlatformSettings() {
   const settings = {
     minStake:      parseFloat(s.min_stake      || '500.00'),
     maxStake:      parseFloat(s.max_stake      || '5000.00'),
+    minWithdrawal: parseFloat(s.min_withdrawal || '500.00'),
+    maxWithdrawal: parseFloat(s.max_withdrawal || '20000.00'),
     payoutPerfect: parseFloat(s.payout_perfect || '2.0'),
     payoutNine:    parseFloat(s.payout_nine    || '0.5'),
     gameDuration:  parseInt(s.game_duration    || '60', 10),
