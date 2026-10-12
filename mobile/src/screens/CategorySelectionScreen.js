@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Alert, ActivityIndicator,
+  TextInput, Alert, ActivityIndicator, Keyboard, Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../utils/theme';
 import { getCategories, getProfile, getPublicSettings, getGameHistory } from '../api';
 import { useAuth } from '../store/authStore';
+import { useKeyboardOverlap } from '../hooks/useKeyboardOverlap';
 
 // Legacy map for old-style icon_name strings; new categories store the emoji directly
 const LEGACY_ICON_MAP = {
@@ -36,6 +37,28 @@ export default function CategorySelectionScreen({ navigation }) {
   const [selected, setSelected]     = useState([]);
   const [stakeInput, setStakeInput] = useState('');
   const restoredRef = useRef(false);
+  const scrollRef = useRef(null);
+  const stakeCardY = useRef(0);
+  const stakeRowY = useRef(0);
+  const stakeFocusedRef = useRef(false);
+  const kbOverlap = useKeyboardOverlap();
+
+  function scrollStakeIntoView() {
+    scrollRef.current?.scrollTo({
+      y: Math.max(0, stakeCardY.current + stakeRowY.current - 20),
+      animated: true,
+    });
+  }
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const show = Keyboard.addListener(showEvent, () => {
+      if (!stakeFocusedRef.current) return;
+      requestAnimationFrame(scrollStakeIntoView);
+      setTimeout(scrollStakeIntoView, 80);
+    });
+    return () => show.remove();
+  }, []);
 
   const { data: catData, isLoading, refetch: refetchCategories } = useQuery({
     queryKey: ['categories'],
@@ -190,7 +213,13 @@ export default function CategorySelectionScreen({ navigation }) {
   return (
     <LinearGradient colors={[colors.darker, colors.dark]} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={[styles.scroll, { paddingBottom: 24 + kbOverlap }]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+        >
           {/* Header */}
           <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginBottom: 12 }}>
             <Text style={{ color: colors.white50, fontSize: 22 }}>←</Text>
@@ -267,7 +296,10 @@ export default function CategorySelectionScreen({ navigation }) {
           )}
 
           {/* Stake section */}
-          <View style={styles.stakeCard}>
+          <View
+            style={styles.stakeCard}
+            onLayout={e => { stakeCardY.current = e.nativeEvent.layout.y; }}
+          >
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
               <View>
                 <Text style={styles.stakeLabel}>Stake Amount</Text>
@@ -296,7 +328,10 @@ export default function CategorySelectionScreen({ navigation }) {
               ))}
             </View>
 
-            <View style={styles.stakeRow}>
+            <View
+              style={styles.stakeRow}
+              onLayout={e => { stakeRowY.current = e.nativeEvent.layout.y; }}
+            >
               <Text style={styles.nairaSign}>₦</Text>
               <TextInput
                 style={styles.stakeInput}
@@ -305,6 +340,12 @@ export default function CategorySelectionScreen({ navigation }) {
                 value={stakeInput}
                 onChangeText={setStakeInput}
                 keyboardType="decimal-pad"
+                onFocus={() => {
+                  stakeFocusedRef.current = true;
+                  requestAnimationFrame(scrollStakeIntoView);
+                  setTimeout(scrollStakeIntoView, 280);
+                }}
+                onBlur={() => { stakeFocusedRef.current = false; }}
               />
             </View>
 

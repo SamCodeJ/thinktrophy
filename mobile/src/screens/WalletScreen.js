@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   TextInput, Alert, ActivityIndicator, Modal,
-  Platform, Keyboard, TouchableWithoutFeedback,
-  Dimensions, useWindowDimensions,
+  Keyboard, TouchableWithoutFeedback,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +11,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
 import { WebView } from 'react-native-webview';
 import { colors } from '../utils/theme';
+import { useKeyboardOverlap } from '../hooks/useKeyboardOverlap';
 import { getWallet, getProfile, deposit, verifyPayment, withdraw, getBanks, resolveAccount } from '../api';
 
 const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -19,32 +19,6 @@ const fmt = n => `₦${parseFloat(n || 0).toLocaleString('en-NG', { minimumFract
 function parseWithdrawAmount(raw) {
   const n = parseFloat(String(raw || '').replace(/,/g, '').trim());
   return Number.isFinite(n) ? n : NaN;
-}
-
-// RN Modal is a separate Android window. Expo Go often resizes with the keyboard;
-// production edge-to-edge builds usually do not, so the keypad covers the sheet.
-function useKeyboardOverlap() {
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const { height: windowHeight } = useWindowDimensions();
-
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvent, e => setKeyboardHeight(e.endCoordinates.height));
-    const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-
-  if (keyboardHeight <= 0) return 0;
-
-  const alreadyShrunk = Math.max(0, Dimensions.get('screen').height - windowHeight);
-  if (alreadyShrunk >= keyboardHeight * 0.5) {
-    return Math.max(0, keyboardHeight - alreadyShrunk);
-  }
-  return keyboardHeight;
 }
 
 function TxRow({ tx }) {
