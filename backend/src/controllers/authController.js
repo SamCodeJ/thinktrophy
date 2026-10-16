@@ -10,6 +10,8 @@ const SALT_ROUNDS = 10;
 const VERIFICATION_EXPIRY_HOURS = 24;
 const MAX_RESET_ATTEMPTS = 5;
 const RESET_LOCK_MS = 15 * 60 * 1000;
+// Valid bcrypt hash used only so missing accounts take the same compare time as real ones.
+const DUMMY_PASSWORD_HASH = '$2b$10$C6UzMDM.H6dfI/f/IKxGhu5lhn1L.M2/P7p92ldGxad68LJZdL17le';
 
 function generateOtp() {
   return crypto.randomInt(100000, 1000000).toString();
@@ -151,18 +153,13 @@ async function login(req, res, next) {
       [loginId]
     );
     const user = result.rows[0];
-    if (!user) {
-      throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
-    }
-    if (!user.is_active) throw new AppError('Account is disabled', 403, 'ACCOUNT_DISABLED');
-
-    const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) {
+    const match = await bcrypt.compare(password, user?.password_hash || DUMMY_PASSWORD_HASH);
+    if (!user || !match || !user.is_active) {
       throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
     }
 
     const accessToken  = signAccessToken({ type: 'user', userId: user.id, username: user.username });
-    const refreshToken = signRefreshToken({ type: 'user', userId: user.id });
+    const refreshToken = signRefreshToken({ type: 'refresh', userId: user.id });
     const refreshHash  = hashRefreshToken(refreshToken);
     await query('UPDATE users SET refresh_token_hash = $1 WHERE id = $2', [refreshHash, user.id]);
 
@@ -184,7 +181,7 @@ async function forgotPassword(req, res, next) {
     const user = result.rows[0];
     if (user && !isResetLocked(user)) {
       const code = generateOtp();
-      const hash = await bcrypt.hash(code, 8);
+      const hash = await bcrypt.hash(code, SALT_ROUNDS);
       const expires = new Date(Date.now() + 15 * 60 * 1000);
       await query(
         `UPDATE users
@@ -365,7 +362,7 @@ async function refreshToken(req, res, next) {
     if (!match) throw new AppError('Invalid refresh token', 401, 'TOKEN_INVALID');
 
     const newAccessToken  = signAccessToken({ type: 'user', userId: user.id, username: user.username });
-    const newRefreshToken = signRefreshToken({ type: 'user', userId: user.id });
+    const newRefreshToken = signRefreshToken({ type: 'refresh', userId: user.id });
     const newHash = hashRefreshToken(newRefreshToken);
     await query('UPDATE users SET refresh_token_hash = $1 WHERE id = $2', [newHash, user.id]);
 
@@ -414,16 +411,20 @@ async function adminLogin(req, res, next) {
     const { email, password } = req.body;
     const normalizedEmail = email ? email.trim().toLowerCase() : '';
     const result = await query(
-      'SELECT id, name, email, password_hash, role FROM admins WHERE LOWER(email) = $1',
+      'SELECT id, name, email, password_hash, role, token_version FROM admins WHERE LOWER(email) = $1',
       [normalizedEmail]
     );
     const admin = result.rows[0];
-    if (!admin) throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
+    const match = await bcrypt.compare(password, admin?.password_hash || DUMMY_PASSWORD_HASH);
+    if (!admin || !match) throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
 
-    const match = await bcrypt.compare(password, admin.password_hash);
-    if (!match) throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
-
-    const token = signAdminToken({ type: 'admin', adminId: admin.id, email: admin.email, role: admin.role });
+    const token = signAdminToken({
+      type: 'admin',
+      adminId: admin.id,
+      email: admin.email,
+      role: admin.role,
+      tokenVersion: Number(admin.token_version ?? 0),
+    });
     res.json({
       success: true,
       data: { admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role }, token },
@@ -441,7 +442,10 @@ async function adminUpdatePassword(req, res, next) {
     if (!match) throw new AppError('Incorrect old password', 400, 'INVALID_CREDENTIALS');
 
     const passwordHash = await bcrypt.hash(new_password, SALT_ROUNDS);
-    await query('UPDATE admins SET password_hash = $1 WHERE id = $2', [passwordHash, req.admin.adminId]);
+    await query(
+      'UPDATE admins SET password_hash = $1, token_version = COALESCE(token_version, 0) + 1 WHERE id = $2',
+      [passwordHash, req.admin.adminId]
+    );
     
     if (admin.email) {
       sendActionEmail(
@@ -467,7 +471,7 @@ async function adminForgotPassword(req, res, next) {
     const admin = result.rows[0];
     if (admin && !isResetLocked(admin)) {
       const code = generateOtp();
-      const hash = await bcrypt.hash(code, 8);
+      const hash = await bcrypt.hash(code, SALT_ROUNDS);
       const expires = new Date(Date.now() + 15 * 60 * 1000);
       await query(
         `UPDATE admins
@@ -511,7 +515,8 @@ async function adminResetPassword(req, res, next) {
            password_reset_code_hash = NULL,
            password_reset_expires_at = NULL,
            password_reset_attempts = 0,
-           password_reset_locked_until = NULL
+           password_reset_locked_until = NULL,
+           token_version = COALESCE(token_version, 0) + 1
        WHERE id = $2`,
       [passwordHash, admin.id]
     );

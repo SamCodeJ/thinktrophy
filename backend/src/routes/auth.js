@@ -16,7 +16,7 @@ const {
   adminUpdatePassword,
 } = require('../controllers/authController');
 const { validate, registerSchema, loginSchema, adminLoginSchema, forgotPasswordSchema, resetPasswordSchema, updatePasswordSchema } = require('../utils/validators');
-const { authLimiter, registerLimiter, loginLimiter, usernameCheckLimiter } = require('../middleware/rateLimiter');
+const { authLimiter, registerLimiter, loginLimiter, refreshLimiter, usernameCheckLimiter } = require('../middleware/rateLimiter');
 const { requireUser, requireAdmin } = require('../middleware/auth');
 
 router.get('/username-available',    usernameCheckLimiter, checkUsername);
@@ -27,7 +27,7 @@ router.post('/reset-password',       authLimiter, validate(resetPasswordSchema),
 router.post('/update-password',      requireUser, validate(updatePasswordSchema), updatePassword);
 router.get('/verify-email',          verifyEmail);
 router.post('/resend-verification',  authLimiter, resendVerification);
-router.post('/refresh',              refreshToken);
+router.post('/refresh',              refreshLimiter, refreshToken);
 router.post('/logout',               requireUser, logout);
 
 router.post('/admin/login',          authLimiter, validate(adminLoginSchema), adminLogin);

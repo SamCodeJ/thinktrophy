@@ -18,6 +18,12 @@ import WebhookLogs from './pages/WebhookLogs';
 import Admins from './pages/Admins';
 import Testimonials from './pages/Testimonials';
 
+function RequireRole({ roles, children }) {
+  const { admin } = useAuth();
+  if (!roles.includes(admin?.role)) return <Navigate to="/" replace />;
+  return children;
+}
+
 function ProtectedRoutes() {
   const { isAuthenticated } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
@@ -37,7 +43,7 @@ function ProtectedRoutes() {
         <Route path="statistics"         element={<Statistics />} />
         <Route path="logs"               element={<Logs />} />
         <Route path="webhooks"           element={<WebhookLogs />} />
-        <Route path="admins"             element={<Admins />} />
+        <Route path="admins"             element={<RequireRole roles={['super_admin']}><Admins /></RequireRole>} />
       </Route>
     </Routes>
   );

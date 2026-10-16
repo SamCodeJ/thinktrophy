@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, UserCheck, UserX, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getUserDetail, updateUserStatus } from '../api';
+import { useAuth } from '../hooks/useAuth';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -59,6 +60,8 @@ export default function UserDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { admin } = useAuth();
+  const canEdit = admin?.role === 'super_admin' || admin?.role === 'moderator';
 
   const [sessionPage, setSessionPage]         = useState(1);
   const [sessionPageSize, setSessionPageSize] = useState(15);
@@ -117,12 +120,14 @@ export default function UserDetail() {
               </div>
             </div>
           </div>
+          {canEdit && (
           <button
             onClick={() => statusMut.mutate({ is_active: !user.is_active })}
             className={`btn-secondary flex items-center gap-2 text-sm ${!user.is_active ? 'text-green-400' : 'text-red-400'}`}
           >
             {user.is_active ? <><UserX size={14} /> Deactivate</> : <><UserCheck size={14} /> Activate</>}
           </button>
+          )}
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">

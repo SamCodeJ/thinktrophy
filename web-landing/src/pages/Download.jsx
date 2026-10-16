@@ -1,7 +1,7 @@
+import { useState, useEffect } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { Trophy, CheckCircle2, ArrowRight, Star } from 'lucide-react';
 
-const APP_STORE_URL  = '#';  // replace when live
 const PLAY_STORE_URL = '#';  // replace when live
 
 const steps = [
@@ -15,6 +15,13 @@ export default function Download() {
   const { state } = useLocation();
   const fromSignup = state?.fromSignup;
   const username   = state?.username;
+  const [iosSoon, setIosSoon] = useState(false);
+
+  useEffect(() => {
+    if (!iosSoon) return undefined;
+    const timer = setTimeout(() => setIosSoon(false), 3500);
+    return () => clearTimeout(timer);
+  }, [iosSoon]);
 
   return (
     <div className="min-h-screen flex items-center justify-center py-20 px-4 relative overflow-hidden">
@@ -65,9 +72,10 @@ export default function Download() {
 
           <div className="space-y-3">
             {/* App Store */}
-            <a
-              href={APP_STORE_URL}
-              className="flex items-center gap-4 p-4 rounded-2xl border-2 border-brand-blue/20 hover:border-brand-blue hover:bg-brand-blue/5 transition-all group"
+            <button
+              type="button"
+              onClick={() => setIosSoon(true)}
+              className="w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-brand-blue/20 hover:border-brand-blue hover:bg-brand-blue/5 transition-all group text-left"
             >
               <div className="w-12 h-12 rounded-xl bg-black flex items-center justify-center flex-shrink-0">
                 <svg viewBox="0 0 24 24" className="w-7 h-7 fill-white">
@@ -84,7 +92,7 @@ export default function Download() {
                   <Star key={i} size={12} className="text-yellow-400 fill-yellow-400" />
                 ))}
               </div>
-            </a>
+            </button>
 
             {/* Google Play */}
             <a
@@ -112,9 +120,15 @@ export default function Download() {
             </a>
           </div>
 
-          <p className="text-center text-xs text-slate-400 dark:text-white/25 pt-1">
-            ⏳ App links coming soon — check back shortly after launch
-          </p>
+          {iosSoon ? (
+            <p role="status" className="text-center text-sm font-semibold text-brand-blue pt-1">
+              iOS app coming soon!
+            </p>
+          ) : (
+            <p className="text-center text-xs text-slate-400 dark:text-white/25 pt-1">
+              ⏳ App links coming soon — check back shortly after launch
+            </p>
+          )}
         </div>
 
         {/* Next steps */}

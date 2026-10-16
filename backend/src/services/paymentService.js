@@ -170,8 +170,9 @@ async function fetchFlutterwaveTransaction({ txRef, flwId, createdAt }) {
     if (attempt < 2) await sleep(1500);
   }
 
+  console.error(`Flutterwave verify exhausted tx_ref=${txRef} mode=${flwKeyMode()}`, lastDetail);
   throw new AppError(
-    `Flutterwave has no charge for reference ${txRef} using the ${flwKeyMode()} secret key. Confirm this exact tx_ref on the Flutterwave dashboard, or retry with the numeric Flutterwave transaction ID.`,
+    'Payment could not be verified. Confirm the transaction on Flutterwave or try again shortly.',
     400,
     'VERIFICATION_FAILED'
   );
@@ -381,9 +382,25 @@ function isFlwTransferInFlightStatus(status) {
   return s === 'NEW' || s === 'PENDING' || s === 'PENDING_APPROVAL' || s === 'PROCESSING';
 }
 
-async function fetchFlutterwaveTransfer(reference) {
+async function fetchFlutterwaveTransfer(reference, flwId) {
+  const headers = { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` };
+  const id = numericFlwId(flwId);
+
+  if (id) {
+    try {
+      const byId = await axios.get(`https://api.flutterwave.com/v3/transfers/${id}`, {
+        headers,
+        timeout: 20000,
+      });
+      const row = byId.data?.data;
+      if (row && String(row.reference) === String(reference)) return row;
+    } catch (err) {
+      console.error('Flutterwave transfer lookup by id failed', reference, err.response?.data || err.message);
+    }
+  }
+
   const listed = await axios.get('https://api.flutterwave.com/v3/transfers', {
-    headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` },
+    headers,
     params: { reference },
     timeout: 20000,
   });
@@ -394,7 +411,7 @@ async function fetchFlutterwaveTransfer(reference) {
 
 // A pending row with no Flutterwave transfer is a timed-out request that never left.
 // Leave recent rows alone so a transfer that is still being created is not refunded twice.
-const STALE_MISSING_TRANSFER_MS = 10 * 60 * 1000;
+const STALE_MISSING_TRANSFER_MS = 30 * 60 * 1000;
 
 async function reconcilePendingWithdrawals(userId) {
   if (!process.env.FLW_SECRET_KEY) return;
@@ -445,6 +462,18 @@ async function requestWithdrawal(userId, amount, accountDetails) {
   if (!accountDetails?.bank_code || !accountDetails?.account_number) {
     throw new AppError('Bank account details are required', 400, 'INVALID_ACCOUNT');
   }
+
+  const resolved = await resolveAccount(accountDetails.account_number, accountDetails.bank_code);
+  const resolvedName = String(resolved?.account_name || '').trim();
+  if (!resolvedName) {
+    throw new AppError('Could not confirm the beneficiary account name', 400, 'INVALID_ACCOUNT');
+  }
+  accountDetails = {
+    type: accountDetails.type,
+    account_number: accountDetails.account_number,
+    bank_code: accountDetails.bank_code,
+    account_name: resolvedName,
+  };
 
   const withdrawalAmount = roundMoney(amount);
   if (!Number.isFinite(withdrawalAmount) || withdrawalAmount <= 0) {
@@ -687,9 +716,25 @@ async function handleWebhook(payload, signature) {
         await verifyDeposit(null, data.tx_ref, { flwId: data.id });
       }
     } else if (event === 'transfer.completed') {
-      const result = await handleTransferCompleted(data);
-      logStatus = result.logStatus;
-      logError = result.logError;
+      const reference = data?.reference;
+      if (!reference) {
+        logStatus = 'ignored';
+        logError = 'Missing transfer reference';
+      } else {
+        const verified = await fetchFlutterwaveTransfer(reference, data.id);
+        if (!verified) {
+          logStatus = 'ignored';
+          logError = 'Transfer not confirmed on Flutterwave';
+        } else {
+          const result = await handleTransferCompleted({
+            reference,
+            status: verified.status,
+            id: verified.id,
+          });
+          logStatus = result.logStatus;
+          logError = result.logError;
+        }
+      }
     } else {
       logStatus = 'ignored';
       logError = 'Unhandled event type';

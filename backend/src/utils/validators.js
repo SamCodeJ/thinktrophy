@@ -53,13 +53,20 @@ const depositSchema = z.object({
 });
 
 const withdrawSchema = z.object({
-  amount: z.coerce.number().finite().positive(),
+  amount: z.coerce.number().finite().positive().max(1000000),
   account_details: z.object({
     type:           z.enum(['bank', 'mobile_money']),
-    account_number: z.string().min(10).max(10),
-    account_name:   z.string().min(2),
-    bank_code:      z.string().min(3, 'Bank code is required'),
+    account_number: z.string().min(10).max(10).regex(/^\d{10}$/, 'Account number must be 10 digits'),
+    account_name:   z.string().min(2).max(120),
+    bank_code:      z.string().min(3, 'Bank code is required').max(20),
   }),
+});
+
+const createAdminSchema = z.object({
+  name:     z.string().trim().min(1).max(100),
+  email:    z.string().email(),
+  password: z.string().min(8).regex(/[A-Z]/, 'Must contain uppercase').regex(/[0-9]/, 'Must contain a number'),
+  role:     z.enum(['super_admin', 'moderator', 'viewer']).default('viewer'),
 });
 
 const createQuestionSchema = z.object({
@@ -189,4 +196,5 @@ module.exports = {
   resetPasswordSchema,
   updatePasswordSchema,
   correctGameAnswerSchema,
+  createAdminSchema,
 };

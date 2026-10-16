@@ -390,13 +390,11 @@ async function bulkUploadQuestions(req, res, next) {
   try {
     if (!req.file) throw new AppError('No file uploaded', 400, 'NO_FILE');
 
-    const filename = req.file.originalname.toLowerCase();
-    const mimetype = req.file.mimetype;
+    const filename = String(req.file.originalname || '').toLowerCase();
     let rawText = '';
 
-    const isDocx = filename.endsWith('.docx') ||
-      mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    const isTxt = filename.endsWith('.txt') || mimetype === 'text/plain';
+    const isDocx = filename.endsWith('.docx');
+    const isTxt = filename.endsWith('.txt');
 
     if (isDocx) {
       const result = await mammoth.extractRawText({ buffer: req.file.buffer });
@@ -451,7 +449,7 @@ async function bulkUploadQuestions(req, res, next) {
         );
         inserted.push(res2.rows[0].id);
       } catch (e) {
-        errors.push(`Question ${qNum}: ${e.message}`);
+        errors.push(`Question ${qNum}: could not be saved`);
       }
     }
 
@@ -1086,20 +1084,13 @@ async function listAdmins(req, res, next) {
 
 async function createAdmin(req, res, next) {
   try {
-    const { name, email, password, role = 'viewer' } = req.body;
-    if (!name || !email || !password) {
-      throw new AppError('Name, email, and password are required', 400, 'MISSING_FIELDS');
-    }
-    const passwordOk = /[A-Z]/.test(password) && /[0-9]/.test(password) && password.length >= 8;
-    if (!passwordOk) {
-      throw new AppError('Password must be at least 8 characters and include an uppercase letter and a number', 400, 'WEAK_PASSWORD');
-    }
+    const { name, email, password, role } = req.body;
     const bcrypt = require('bcrypt');
     const passwordHash = await bcrypt.hash(password, 12);
 
     const result = await query(
       'INSERT INTO admins (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
-      [name, email, passwordHash, role]
+      [name, email.trim().toLowerCase(), passwordHash, role]
     );
 
     await logAdminAction({

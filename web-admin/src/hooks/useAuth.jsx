@@ -3,11 +3,29 @@ import toast from 'react-hot-toast';
 
 const AuthContext = createContext(null);
 
+function readAdminSession() {
+  try {
+    const token = localStorage.getItem('admin_token');
+    const info = JSON.parse(localStorage.getItem('admin_info') || 'null');
+    if (!token || !info) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) throw new Error('malformed');
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (payload?.exp && payload.exp * 1000 < Date.now()) {
+      localStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_info');
+      return null;
+    }
+    return info;
+  } catch {
+    localStorage.removeItem('admin_token');
+    localStorage.removeItem('admin_info');
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [admin, setAdmin] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('admin_info') || 'null'); }
-    catch { return null; }
-  });
+  const [admin, setAdmin] = useState(() => readAdminSession());
 
   function login(adminData, token) {
     localStorage.setItem('admin_token', token);

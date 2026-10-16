@@ -15,7 +15,7 @@ function requireUser(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ success: false, error: { code: 'TOKEN_EXPIRED', message: err.message } });
+    return res.status(401).json({ success: false, error: { code: 'TOKEN_EXPIRED', message: 'Invalid or expired token' } });
   }
 }
 
@@ -31,17 +31,22 @@ async function requireAdmin(req, res, next) {
       return res.status(401).json({ success: false, error: { code: 'FORBIDDEN', message: 'Admin access required' } });
     }
     const result = await query(
-      'SELECT id, name, email, role FROM admins WHERE id = $1',
+      'SELECT id, name, email, role, token_version FROM admins WHERE id = $1',
       [decoded.adminId]
     );
     const admin = result.rows[0];
     if (!admin) {
       return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Admin account not found' } });
     }
+    const dbVersion = Number(admin.token_version ?? 0);
+    const tokenVersion = Number(decoded.tokenVersion ?? 0);
+    if (dbVersion !== tokenVersion) {
+      return res.status(401).json({ success: false, error: { code: 'TOKEN_EXPIRED', message: 'Invalid or expired token' } });
+    }
     req.admin = { type: 'admin', adminId: admin.id, email: admin.email, role: admin.role, name: admin.name };
     next();
   } catch (err) {
-    return res.status(401).json({ success: false, error: { code: 'TOKEN_EXPIRED', message: err.message } });
+    return res.status(401).json({ success: false, error: { code: 'TOKEN_EXPIRED', message: 'Invalid or expired token' } });
   }
 }
 

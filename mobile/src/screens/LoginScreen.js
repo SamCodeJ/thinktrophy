@@ -38,6 +38,23 @@ export default function LoginScreen({ navigation, route }) {
     loadSavedEmail();
   }, []);
 
+  const biometricStoreOptions = {
+    requireAuthentication: true,
+    authenticationPrompt: 'Authenticate to sign in',
+  };
+
+  async function persistBiometricCredentials(email, password) {
+    await SecureStore.setItemAsync('saved_email', email);
+    try {
+      await SecureStore.setItemAsync('saved_password', password, {
+        requireAuthentication: true,
+        authenticationPrompt: 'Enable biometric login',
+      });
+    } catch {
+      await SecureStore.deleteItemAsync('saved_password');
+    }
+  }
+
   async function handleLogin() {
     if (!form.email || !form.password) {
       Alert.alert('Missing fields', 'Please enter your username or email and password.');
@@ -46,10 +63,7 @@ export default function LoginScreen({ navigation, route }) {
     setLoading(true);
     try {
       const res = await login(form);
-      // Save credentials for biometric login
-      await SecureStore.setItemAsync('saved_email', form.email);
-      await SecureStore.setItemAsync('saved_password', form.password);
-      
+      await persistBiometricCredentials(form.email, form.password);
       await signIn(res.data.accessToken, res.data.refreshToken, res.data.user);
     } catch (err) {
       Alert.alert('Login Failed', err?.error?.message || 'Invalid credentials. Please try again.');
@@ -65,33 +79,31 @@ export default function LoginScreen({ navigation, route }) {
       Alert.alert('Biometrics unavailable', 'Set up Face ID or fingerprint in your device settings.');
       return;
     }
-    
+
     const savedEmail = await SecureStore.getItemAsync('saved_email');
-    const savedPassword = await SecureStore.getItemAsync('saved_password');
-    
+    let savedPassword = null;
+    try {
+      savedPassword = await SecureStore.getItemAsync('saved_password', biometricStoreOptions);
+    } catch {
+      savedPassword = null;
+    }
+
     if (!savedEmail || !savedPassword) {
       Alert.alert('Biometric login', 'Please login with your password first to enable biometric login.');
       return;
     }
 
-    const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: 'Authenticate to sign in',
-      fallbackLabel: 'Use Password',
-    });
-    
-    if (result.success) {
-      setLoading(true);
-      try {
-        const res = await login({ email: savedEmail, password: savedPassword });
-        await signIn(res.data.accessToken, res.data.refreshToken, res.data.user);
-      } catch (err) {
-        Alert.alert('Login Failed', err?.error?.message || 'Invalid saved credentials. Please login with password again.');
-        // Clear invalid credentials
-        await SecureStore.deleteItemAsync('saved_email');
-        await SecureStore.deleteItemAsync('saved_password');
-      } finally {
-        setLoading(false);
-      }
+    setLoading(true);
+    try {
+      const res = await login({ identifier: savedEmail, password: savedPassword });
+      await persistBiometricCredentials(savedEmail, savedPassword);
+      await signIn(res.data.accessToken, res.data.refreshToken, res.data.user);
+    } catch (err) {
+      Alert.alert('Login Failed', err?.error?.message || 'Invalid saved credentials. Please login with password again.');
+      await SecureStore.deleteItemAsync('saved_email');
+      await SecureStore.deleteItemAsync('saved_password');
+    } finally {
+      setLoading(false);
     }
   }
 

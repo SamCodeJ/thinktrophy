@@ -7,6 +7,7 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "start:pm2": "pm2 start ecosystem.config.cjs",
+    "test": "node --test \"tests/**/*.test.js\"",
     "migrate": "node src/db/migrate.js",
     "seed": "node src/db/seed.js",
     "migrate:seed": "node src/db/migrate.js && node src/db/seed.js"

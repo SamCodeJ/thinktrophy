@@ -11,7 +11,7 @@ import { fetchPublicTestimonials } from '../api/testimonials';
 /* ─── Data ─────────────────────────────────────────────────────────────── */
 
 const stats = [
-  { value: '130k+', label: 'Questions' },
+  { value: '18+',   label: 'Rated' },
   { value: '25+',      label: 'Categories' },
   { value: '50,000+', label: 'Players' },
   { value: '₦500',   label: 'Min Stake' },
@@ -94,7 +94,6 @@ const categories = [
   { icon: Brain,        name: 'General',   color: 'text-indigo-500'},
 ];
 
-const APP_STORE_URL    = '#';  // replace when live
 const PLAY_STORE_URL   = '#';  // replace when live
 
 /* ─── Section components ────────────────────────────────────────────────── */
@@ -124,6 +123,13 @@ export default function Home() {
   const [testimonials, setTestimonials] = useState([]);
   const [testimonialsLoading, setTestimonialsLoading] = useState(true);
   const [testimonialsError, setTestimonialsError] = useState(false);
+  const [iosSoon, setIosSoon] = useState(false);
+
+  useEffect(() => {
+    if (!iosSoon) return undefined;
+    const timer = setTimeout(() => setIosSoon(false), 3500);
+    return () => clearTimeout(timer);
+  }, [iosSoon]);
 
   useEffect(() => {
     let cancelled = false;
@@ -435,7 +441,7 @@ export default function Home() {
             <div className="grid grid-cols-3 gap-4 mt-8">
               {[
                 { score: '10 / 10', label: 'Perfect', multiplier: '2×', color: 'from-green-500 to-emerald-400', desc: 'Full payout at 2× your stake' },
-                { score: '9 / 10',  label: 'Excellent', multiplier: '1.5×', color: 'from-brand-blue to-brand-teal', desc: 'Partial payout at 1.5× stake' },
+                { score: '9 / 10',  label: 'Excellent', multiplier: '0.5×', color: 'from-brand-blue to-brand-teal', desc: 'Partial payout at 0.5× stake' },
                 { score: '≤ 8/10', label: 'Try Again', multiplier: '0×', color: 'from-slate-400 to-slate-500', desc: 'Stake is forfeited. Keep practicing!' },
               ].map(({ score, label, multiplier, color, desc }) => (
                 <div key={score} className="card p-5 text-center space-y-2">
@@ -471,8 +477,9 @@ export default function Home() {
 
               <div className="flex flex-col sm:flex-row gap-4 justify-center pt-2">
                 {/* App Store */}
-                <a
-                  href={APP_STORE_URL}
+                <button
+                  type="button"
+                  onClick={() => setIosSoon(true)}
                   className="flex items-center gap-3 bg-black/30 hover:bg-black/50 border border-white/20 rounded-2xl px-5 py-3.5 transition-all"
                 >
                   <svg viewBox="0 0 24 24" className="w-7 h-7 fill-white flex-shrink-0">
@@ -482,7 +489,7 @@ export default function Home() {
                     <p className="text-xs opacity-70">Download on the</p>
                     <p className="text-sm font-bold">App Store</p>
                   </div>
-                </a>
+                </button>
 
                 {/* Play Store */}
                 <a
@@ -499,9 +506,15 @@ export default function Home() {
                 </a>
               </div>
 
-              <p className="text-xs opacity-50 pt-2">
-                App links coming soon. Sign up now to be notified at launch.
-              </p>
+              {iosSoon ? (
+                <p role="status" className="text-sm font-semibold pt-2">
+                  iOS app coming soon!
+                </p>
+              ) : (
+                <p className="text-xs opacity-50 pt-2">
+                  App links coming soon. Sign up now to be notified at launch.
+                </p>
+              )}
             </div>
           </div>
         </div>

@@ -20,7 +20,11 @@ const app  = express();
 const PORT = process.env.PORT || 4000;
 
 // ─── Security ───────────────────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+app.disable('x-powered-by');
 
 function corsOrigin() {
   const raw = (process.env.CORS_ORIGIN || '').trim();
@@ -45,19 +49,26 @@ app.use(cors({
 app.set('trust proxy', 1);
 
 // ─── Logging & parsing ───────────────────────────────────────────────────────
-if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'));
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('dev', {
+    skip: (req) => req.path.includes('verify-email') || req.path.includes('/payment/webhook'),
+  }));
+}
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ─── Health check ────────────────────────────────────────────────────────────
 app.get('/health', async (req, res) => {
   const redis = await pingRedis();
-  res.json({
-    status: 'ok',
+  const payload = {
+    status: redis === 'error' ? 'degraded' : 'ok',
     service: 'ThinkTrophy API',
-    redis,
     ts: Date.now(),
-  });
+  };
+  if (process.env.NODE_ENV !== 'production') {
+    payload.redis = redis;
+  }
+  res.json(payload);
 });
 
 // ─── Public app / landing (no auth required) ────────────────────────────────

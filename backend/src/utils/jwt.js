@@ -6,27 +6,40 @@ require('dotenv').config();
 
 const isDev = process.env.NODE_ENV !== 'production';
 
+function hasRsaKeys() {
+  return Boolean(
+    process.env.JWT_PRIVATE_KEY &&
+    process.env.JWT_PRIVATE_KEY !== 'REPLACE_WITH_BASE64_ENCODED_RSA_PRIVATE_KEY' &&
+    process.env.JWT_PUBLIC_KEY &&
+    process.env.JWT_PUBLIC_KEY !== 'REPLACE_WITH_BASE64_ENCODED_RSA_PUBLIC_KEY'
+  );
+}
+
+function getAccessHsSecret() {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (secret && secret !== 'REPLACE_WITH_LONG_RANDOM_STRING_64_CHARS') return secret;
+  if (!isDev) throw new Error('JWT_ACCESS_SECRET is not configured');
+  return 'dev-access-secret-change-me';
+}
+
 function getPrivateKey() {
-  if (process.env.JWT_PRIVATE_KEY && process.env.JWT_PRIVATE_KEY !== 'REPLACE_WITH_BASE64_ENCODED_RSA_PRIVATE_KEY') {
+  if (hasRsaKeys()) {
     return Buffer.from(process.env.JWT_PRIVATE_KEY, 'base64').toString('utf8');
   }
-  if (isDev) return process.env.JWT_REFRESH_SECRET || 'dev-secret-change-me';
+  if (isDev) return getAccessHsSecret();
   throw new Error('JWT_PRIVATE_KEY is not configured');
 }
 
 function getPublicKey() {
-  if (process.env.JWT_PUBLIC_KEY && process.env.JWT_PUBLIC_KEY !== 'REPLACE_WITH_BASE64_ENCODED_RSA_PUBLIC_KEY') {
+  if (hasRsaKeys()) {
     return Buffer.from(process.env.JWT_PUBLIC_KEY, 'base64').toString('utf8');
   }
-  if (isDev) return process.env.JWT_REFRESH_SECRET || 'dev-secret-change-me';
+  if (isDev) return getAccessHsSecret();
   throw new Error('JWT_PUBLIC_KEY is not configured');
 }
 
 function getAlgorithm() {
-  const hasRsaKey =
-    process.env.JWT_PRIVATE_KEY &&
-    process.env.JWT_PRIVATE_KEY !== 'REPLACE_WITH_BASE64_ENCODED_RSA_PRIVATE_KEY';
-  return hasRsaKey ? 'RS256' : 'HS256';
+  return hasRsaKeys() ? 'RS256' : 'HS256';
 }
 
 function getRefreshSecret() {
@@ -58,15 +71,21 @@ function verifyAccessToken(token) {
 // ─── Refresh token (7d) ─────────────────────────────────────────────────────
 function signRefreshToken(payload) {
   return jwt.sign(payload, getRefreshSecret(), {
+    algorithm: 'HS256',
     expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d',
     issuer: 'thinktrophy',
   });
 }
 
 function verifyRefreshToken(token) {
-  return jwt.verify(token, getRefreshSecret(), {
+  const decoded = jwt.verify(token, getRefreshSecret(), {
+    algorithms: ['HS256'],
     issuer: 'thinktrophy',
   });
+  if (decoded.type !== 'refresh') {
+    throw new Error('Invalid refresh token type');
+  }
+  return decoded;
 }
 
 // ─── Game session token ──────────────

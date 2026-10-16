@@ -573,11 +573,11 @@ async function reconcileReferral(client, { refereeId, sessionId, settings }) {
      FROM transactions
      WHERE type = 'referral_bonus'
        AND (
-         metadata->>'referred_user_id' = $1
-         OR game_session_id IN (SELECT id FROM game_sessions WHERE user_id = $1)
+         metadata->>'referred_user_id' = $1::text
+         OR game_session_id IN (SELECT id FROM game_sessions WHERE user_id = $2::uuid)
        )
      FOR UPDATE`,
-    [String(refereeId)]
+    [String(refereeId), refereeId]
   );
   const existing = existingRes.rows;
 

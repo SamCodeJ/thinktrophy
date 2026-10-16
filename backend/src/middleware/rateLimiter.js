@@ -40,11 +40,29 @@ const registerLimiter = createLimiter('register', {
 
 const loginLimiter = createLimiter('login', {
   windowMs: 15 * 60 * 1000,
-  max: 40,
+  max: 15,
   skipSuccessfulRequests: true,
   message: {
     success: false,
     error: { code: 'RATE_LIMITED', message: 'Too many login attempts. Please try again later.' },
+  },
+});
+
+const refreshLimiter = createLimiter('refresh', {
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: {
+    success: false,
+    error: { code: 'RATE_LIMITED', message: 'Too many session refresh attempts. Please try again later.' },
+  },
+});
+
+const webhookLimiter = createLimiter('webhook', {
+  windowMs: 60 * 1000,
+  max: 120,
+  message: {
+    success: false,
+    error: { code: 'RATE_LIMITED', message: 'Too many webhook requests.' },
   },
 });
 
@@ -84,4 +102,4 @@ const usernameCheckLimiter = createLimiter('username', {
   },
 });
 
-module.exports = { authLimiter, registerLimiter, loginLimiter, apiLimiter, answerLimiter, moneyLimiter, usernameCheckLimiter };
+module.exports = { authLimiter, registerLimiter, loginLimiter, refreshLimiter, webhookLimiter, apiLimiter, answerLimiter, moneyLimiter, usernameCheckLimiter };

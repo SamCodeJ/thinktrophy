@@ -64,6 +64,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_attempts INTEGER NOT N
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_locked_until TIMESTAMPTZ;
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_reset_locked_until TIMESTAMPTZ;
+ALTER TABLE admins ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_wallet_balance_non_negative;
 ALTER TABLE users ADD CONSTRAINT users_wallet_balance_non_negative CHECK (wallet_balance >= 0);

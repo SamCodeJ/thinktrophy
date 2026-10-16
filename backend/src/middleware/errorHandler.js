@@ -1,3 +1,11 @@
+class AppError extends Error {
+  constructor(message, statusCode = 400, code = 'APP_ERROR') {
+    super(message);
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
 function errorHandler(err, req, res, next) {
   const isDev = process.env.NODE_ENV !== 'production';
   console.error(`[${new Date().toISOString()}] ERROR ${req.method} ${req.path}:`, err.message);
@@ -16,12 +24,14 @@ function errorHandler(err, req, res, next) {
     });
   }
 
-  const statusCode = err.statusCode || err.status || 500;
+  const isAppError = err instanceof AppError;
+  const statusCode = isAppError ? err.statusCode : (err.statusCode || err.status || 500);
+  const expose = isAppError || (isDev && statusCode < 500);
   return res.status(statusCode).json({
     success: false,
     error: {
-      code:    err.code    || 'INTERNAL_ERROR',
-      message: err.message || 'An unexpected error occurred',
+      code:    expose ? (err.code || 'INTERNAL_ERROR') : 'INTERNAL_ERROR',
+      message: expose ? (err.message || 'An unexpected error occurred') : 'An unexpected error occurred',
       ...(isDev && { stack: err.stack }),
     },
   });
@@ -32,14 +42,6 @@ function notFound(req, res) {
     success: false,
     error: { code: 'NOT_FOUND', message: `Route ${req.method} ${req.path} not found` },
   });
-}
-
-class AppError extends Error {
-  constructor(message, statusCode = 400, code = 'APP_ERROR') {
-    super(message);
-    this.statusCode = statusCode;
-    this.code = code;
-  }
 }
 
 module.exports = { errorHandler, notFound, AppError };

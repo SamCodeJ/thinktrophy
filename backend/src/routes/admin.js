@@ -5,7 +5,7 @@ const { requireAdmin, requireModeratorOrAbove, requireSuperAdmin } = require('..
 const {
   validate, createQuestionSchema, updateQuestionSchema,
   createCategorySchema, testimonialBodySchema, settingsSchema,
-  correctGameAnswerSchema,
+  correctGameAnswerSchema, createAdminSchema,
 } = require('../utils/validators');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -70,7 +70,7 @@ router.get('/logs',                     ctrl.getAdminLogs);
 
 // Admins
 router.get('/admins',                   requireSuperAdmin, ctrl.listAdmins);
-router.post('/admins',                  requireSuperAdmin, ctrl.createAdmin);
+router.post('/admins',                  requireSuperAdmin, validate(createAdminSchema), ctrl.createAdmin);
 router.put('/admins/:id/role',          requireSuperAdmin, ctrl.updateAdminRole);
 
 module.exports = router;

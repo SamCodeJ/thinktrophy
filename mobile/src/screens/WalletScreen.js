@@ -21,6 +21,33 @@ function parseWithdrawAmount(raw) {
   return Number.isFinite(n) ? n : NaN;
 }
 
+function isTrustedCheckoutUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase();
+    return (
+      host === 'checkout.flutterwave.com' ||
+      host === 'flutterwave.com' ||
+      host.endsWith('.flutterwave.com') ||
+      host === 'ravepay.co' ||
+      host.endsWith('.ravepay.co')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedWebViewUrl(url) {
+  if (!url) return false;
+  if (url.startsWith('about:')) return true;
+  try {
+    return new URL(url).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function TxRow({ tx }) {
   const typeIcon = { deposit: '⬇️', stake: '🎮', payout: '💰', withdrawal: '⬆️', referral_bonus: '🎁', tax_deduction: '🏛️' };
   const typeColor = {
@@ -130,6 +157,10 @@ export default function WalletScreen({ navigation, route }) {
       const link = res.data?.payment_link;
       if (!ref || !link) {
         Alert.alert('Error', 'Failed to initialize payment. Please try again.');
+        return;
+      }
+      if (!isTrustedCheckoutUrl(link)) {
+        Alert.alert('Error', 'Payment provider returned an untrusted checkout URL.');
         return;
       }
       paymentRefRef.current = ref;
@@ -327,6 +358,8 @@ export default function WalletScreen({ navigation, route }) {
           domStorageEnabled={true}
           startInLoadingState={true}
           scalesPageToFit={true}
+          originWhitelist={['https://*', 'about:blank']}
+          onShouldStartLoadWithRequest={(request) => isAllowedWebViewUrl(request.url)}
           onNavigationStateChange={handleNavigationStateChange}
         />
       </SafeAreaView>
