@@ -398,8 +398,7 @@ export default function Home() {
             </div>
           ) : testimonialsError ? (
             <p className="text-center text-sm text-slate-500 dark:text-white/45 max-w-lg mx-auto">
-              We could not load reviews right now. If you are running the site locally, start the API
-              on port 4000 or set <code className="text-xs bg-slate-100 dark:bg-white/10 px-1.5 py-0.5 rounded">VITE_API_URL</code> to your backend URL.
+              We could not load reviews right now. Please check back shortly.
             </p>
           ) : testimonials.length === 0 ? (
             <p className="text-center text-sm text-slate-500 dark:text-white/45 max-w-lg mx-auto">
