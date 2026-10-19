@@ -32,4 +32,5 @@ export const getCategories       = () => client.get('/game/categories');
 export const createGameSession   = (data) => client.post('/game/session/create', data);
 export const submitAnswer        = (sessionId, data) => client.post(`/game/session/${sessionId}/answer`, data);
 export const getSessionResult    = (sessionId) => client.get(`/game/session/${sessionId}/result`);
-export const abandonSession      = (sessionId) => client.post(`/game/session/${sessionId}/abandon`);
+// reason: 'timeout' settles the score reached when the clock ran out; omit to forfeit the stake.
+export const abandonSession      = (sessionId, reason) => client.post(`/game/session/${sessionId}/abandon`, reason ? { reason } : {});

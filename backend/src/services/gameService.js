@@ -84,16 +84,20 @@ async function createSession(userId, categoryIds, stakeAmount) {
       throw new AppError('Insufficient wallet balance', 400, 'INSUFFICIENT_BALANCE');
 
     // Auto-expire any stale active sessions older than 2 minutes before checking.
-    // Their stakes were already journaled to Stakes Held and must be forfeited after commit.
-    const expiredRes = await client.query(
-      `UPDATE game_sessions
-       SET status = 'expired', completed_at = NOW()
+    // They count as games played and are settled on the score reached (a 9/10 still pays);
+    // the Zoho/email follow-up runs after commit.
+    const staleRes = await client.query(
+      `SELECT id FROM game_sessions
        WHERE user_id = $1
          AND status = 'active'
-         AND started_at < NOW() - INTERVAL '2 minutes'
-       RETURNING id, user_id, stake_amount`,
+         AND started_at < NOW() - INTERVAL '2 minutes'`,
       [userId]
     );
+    const expiredRows = [];
+    for (const stale of staleRes.rows) {
+      const row = await expireInTx(client, stale.id, userId, { timedOut: true });
+      if (row) expiredRows.push(row);
+    }
 
     // Check for a genuinely active (recent) session
     const existing = await client.query(
@@ -159,16 +163,7 @@ async function createSession(userId, categoryIds, stakeAmount) {
     await client.query('COMMIT');
 
     const zohoService = require('./zohoService');
-    for (const expired of expiredRes.rows) {
-      zohoService.syncGameSettlement(expired.user_id, {
-        gameId: expired.id,
-        stake: parseFloat(expired.stake_amount),
-        grossPayout: 0,
-        taxAmount: 0,
-        netAmount: 0,
-        reason: 'forfeit',
-      }).catch(err => console.error('Failed to sync forfeited stake to Zoho Books:', err));
-    }
+    expiredRows.forEach(afterExpiry);
     zohoService.syncStake(userId, stakeAmount, `SESSION-${sessionId}`)
       .catch(err => console.error('Failed to sync stake to Zoho Books:', err));
 
@@ -227,7 +222,7 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
   const gameDuration = tokenData.gameDuration || 60;
   const gracePeriodMs = (gameDuration + 10) * 1000;
   if (elapsed > gracePeriodMs) {
-    await expireSession(sessionId);
+    await expireSession(sessionId, userId, { timedOut: true });
     throw new AppError('Game time expired', 400, 'TIME_EXPIRED');
   }
 
@@ -309,61 +304,11 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
       let userEmail = null;
       let userName = null;
       let referralSync = null;
-      
+
       if (payout > 0) {
-        const profit = roundMoney(payout - stake);
-
-        // Check if this is the user's first win before updating their total_won
-        const preCheck = await client.query('SELECT total_won FROM users WHERE id = $1', [userId]);
-        const isFirstWin = parseFloat(preCheck.rows[0].total_won) === 0;
-
-        // Credit the NET payout (gross prize minus tax). Stake is not taxed.
-        const uRes = await client.query(
-          'UPDATE users SET wallet_balance = wallet_balance + $1, total_won = total_won + $2 WHERE id = $3 RETURNING username, email, referred_by',
-          [netPayout, payout, userId]
-        );
-        userEmail = uRes.rows[0]?.email;
-        userName = uRes.rows[0]?.username;
-        const referredBy = uRes.rows[0]?.referred_by;
-        
-        // Log the gross payout transaction
-        await client.query(
-          `INSERT INTO transactions (user_id, type, amount, status, game_session_id)
-           VALUES ($1, 'payout', $2, 'verified', $3)`,
-          [userId, payout, sessionId]
-        );
-        
-        // Log the tax deduction transaction if applicable
-        if (taxAmount > 0) {
-          await client.query(
-            `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
-             VALUES ($1, 'tax_deduction', $2, 'verified', $3, $4)`,
-            [userId, taxAmount, sessionId, JSON.stringify({
-              tax_rate: settings.userWinTaxPercentage,
-              taxable_winnings: taxableWinnings,
-              profit_amount: profit,
-            })]
-          );
-        }
-
-        // Referral is 10% of the first taxable win, including a 9/10 return.
-        const bonus = computeReferralBonus(taxableWinnings, settings.referralWinPercentage);
-        if (isFirstWin && referredBy && bonus > 0) {
-          await client.query(
-            'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
-            [bonus, referredBy]
-          );
-          await client.query(
-            `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
-             VALUES ($1, 'referral_bonus', $2, 'verified', $3, $4)`,
-            [referredBy, bonus, sessionId, JSON.stringify({
-              referred_user_id: userId,
-              taxable_winnings: taxableWinnings,
-              profit_amount: profit,
-            })]
-          );
-          referralSync = { referredBy, bonus, sessionId };
-        }
+        ({ userEmail, userName, referralSync } = await creditWin(client, {
+          userId, sessionId, stake, payout, netPayout, taxAmount, taxableWinnings, settings,
+        }));
       }
 
       await client.query(
@@ -371,19 +316,7 @@ async function submitAnswer(userId, sessionId, answerUuid, submittedSessionToken
         [userId]
       );
 
-      // Increment question stats
-      const servedIds = answersSubmitted.map(a => a.question_id);
-      const correctIds = answersSubmitted.filter(a => a.is_correct).map(a => a.question_id);
-      if (servedIds.length) {
-        await client.query(
-          `UPDATE questions
-           SET times_served = times_served + 1,
-               times_answered_correctly = times_answered_correctly
-                 + CASE WHEN id = ANY($2::uuid[]) THEN 1 ELSE 0 END
-           WHERE id = ANY($1::uuid[])`,
-          [servedIds, correctIds]
-        );
-      }
+      await bumpQuestionStats(client, answersSubmitted);
 
       await client.query('COMMIT');
 
@@ -489,7 +422,173 @@ function computeWinTax(taxableWinnings, taxRate) {
   return roundMoney(taxableWinnings * taxRate);
 }
 
-async function expireSession(sessionId, userId) {
+// Credit a winning game to the player's wallet and log payout / tax / referral.
+// Shared by normal completion and timed-out settlement. Runs inside the caller's transaction.
+async function creditWin(client, { userId, sessionId, stake, payout, netPayout, taxAmount, taxableWinnings, settings }) {
+  const profit = roundMoney(payout - stake);
+  let referralSync = null;
+
+  // Check if this is the user's first win before updating their total_won
+  const preCheck = await client.query('SELECT total_won FROM users WHERE id = $1', [userId]);
+  const isFirstWin = parseFloat(preCheck.rows[0].total_won) === 0;
+
+  // Credit the NET payout (gross prize minus tax). Stake is not taxed.
+  const uRes = await client.query(
+    'UPDATE users SET wallet_balance = wallet_balance + $1, total_won = total_won + $2 WHERE id = $3 RETURNING username, email, referred_by',
+    [netPayout, payout, userId]
+  );
+  const userEmail = uRes.rows[0]?.email;
+  const userName = uRes.rows[0]?.username;
+  const referredBy = uRes.rows[0]?.referred_by;
+
+  // Log the gross payout transaction
+  await client.query(
+    `INSERT INTO transactions (user_id, type, amount, status, game_session_id)
+     VALUES ($1, 'payout', $2, 'verified', $3)`,
+    [userId, payout, sessionId]
+  );
+
+  // Log the tax deduction transaction if applicable
+  if (taxAmount > 0) {
+    await client.query(
+      `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
+       VALUES ($1, 'tax_deduction', $2, 'verified', $3, $4)`,
+      [userId, taxAmount, sessionId, JSON.stringify({
+        tax_rate: settings.userWinTaxPercentage,
+        taxable_winnings: taxableWinnings,
+        profit_amount: profit,
+      })]
+    );
+  }
+
+  // Referral is 10% of the first taxable win, including a 9/10 return.
+  const bonus = computeReferralBonus(taxableWinnings, settings.referralWinPercentage);
+  if (isFirstWin && referredBy && bonus > 0) {
+    await client.query(
+      'UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2',
+      [bonus, referredBy]
+    );
+    await client.query(
+      `INSERT INTO transactions (user_id, type, amount, status, game_session_id, metadata)
+       VALUES ($1, 'referral_bonus', $2, 'verified', $3, $4)`,
+      [referredBy, bonus, sessionId, JSON.stringify({
+        referred_user_id: userId,
+        taxable_winnings: taxableWinnings,
+        profit_amount: profit,
+      })]
+    );
+    referralSync = { referredBy, bonus, sessionId };
+  }
+
+  return { userEmail, userName, referralSync };
+}
+
+async function bumpQuestionStats(client, answersSubmitted) {
+  const servedIds = answersSubmitted.map(a => a.question_id);
+  const correctIds = answersSubmitted.filter(a => a.is_correct).map(a => a.question_id);
+  if (!servedIds.length) return;
+  await client.query(
+    `UPDATE questions
+     SET times_served = times_served + 1,
+         times_answered_correctly = times_answered_correctly
+           + CASE WHEN id = ANY($2::uuid[]) THEN 1 ELSE 0 END
+     WHERE id = ANY($1::uuid[])`,
+    [servedIds, correctIds]
+  );
+}
+
+/**
+ * Expire an active session inside the caller's transaction.
+ *
+ * An expired game still counts as a game played. When `timedOut` is true (the
+ * clock genuinely ran out) the score reached so far is settled with the normal
+ * payout rules, so a 9/10 is rewarded. Otherwise (player abandoned / closed the
+ * app) the stake is forfeited. Returns null when there is no active session.
+ */
+async function expireInTx(client, sessionId, userId, { timedOut = false } = {}) {
+  const params = [sessionId];
+  let userClause = '';
+  if (userId) {
+    params.push(userId);
+    userClause = ` AND user_id = $${params.length}`;
+  }
+  const sessRes = await client.query(
+    `SELECT * FROM game_sessions WHERE id = $1 AND status = 'active'${userClause} FOR UPDATE`,
+    params
+  );
+  const session = sessRes.rows[0];
+  if (!session) return null;
+
+  const stake = parseFloat(session.stake_amount);
+  const answers = Array.isArray(session.answers_submitted) ? session.answers_submitted : [];
+  const score = answers.filter(a => a.is_correct).length;
+  const settings = await getPlatformSettings();
+
+  // Only settle when the clock really ran out (small tolerance for client/server drift),
+  // so the "timeout" flag cannot be used to dodge a forfeit.
+  const elapsedMs = Date.now() - new Date(session.started_at).getTime();
+  const settle = timedOut && elapsedMs >= Math.max(settings.gameDuration - 3, 0) * 1000;
+
+  const payout = settle ? computePayout(score, stake, settings) : 0;
+  const taxableWinnings = computeTaxableWinnings(payout, stake);
+  const taxAmount = computeWinTax(taxableWinnings, settings.userWinTaxPercentage);
+  const netPayout = roundMoney(payout - taxAmount);
+
+  await client.query(
+    `UPDATE game_sessions
+     SET status = 'expired', completed_at = NOW(), score = $2,
+         payout_amount = $3, tax_amount = $4
+     WHERE id = $1`,
+    [sessionId, score, payout, taxAmount]
+  );
+
+  let win = { userEmail: null, userName: null, referralSync: null };
+  if (payout > 0) {
+    win = await creditWin(client, {
+      userId: session.user_id, sessionId, stake, payout, netPayout, taxAmount, taxableWinnings, settings,
+    });
+  }
+
+  await client.query(
+    'UPDATE users SET total_games_played = total_games_played + 1 WHERE id = $1',
+    [session.user_id]
+  );
+  await bumpQuestionStats(client, answers);
+
+  return {
+    id: sessionId, user_id: session.user_id, stake, score, payout, taxAmount, netPayout, ...win,
+  };
+}
+
+// Zoho journal + win email for an expired session. Call only after COMMIT.
+function afterExpiry(row) {
+  const zohoService = require('./zohoService');
+  zohoService.syncGameSettlement(row.user_id, {
+    gameId: row.id,
+    stake: row.stake,
+    grossPayout: row.payout,
+    taxAmount: row.taxAmount,
+    netAmount: row.netPayout,
+    score: row.score,
+    reason: row.payout > 0 ? undefined : 'forfeit',
+  }).catch(err => console.error('Failed to sync expired game to Zoho Books:', err));
+
+  if (row.referralSync) {
+    zohoService.syncReferralBonus(row.referralSync.referredBy, row.referralSync.bonus, row.referralSync.sessionId)
+      .catch(err => console.error('Failed to sync referral bonus to Zoho Books:', err));
+  }
+
+  if (row.payout > 0 && row.userEmail) {
+    sendActionEmail(
+      row.userEmail,
+      row.userName,
+      'You Won on ThinkTrophy!',
+      `Time ran out, but you scored ${row.score}/10 and won ₦${parseFloat(row.netPayout).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} after tax. The amount has been credited to your wallet.`
+    ).catch(err => console.error('Failed to send winning email:', err));
+  }
+}
+
+async function expireSession(sessionId, userId, { timedOut = false } = {}) {
   const params = [sessionId];
   let userClause = '';
   if (userId) {
@@ -509,26 +608,21 @@ async function expireSession(sessionId, userId) {
   const shownCount = Math.max((session.current_question_index || 0) + 1, 1);
   await markQuestionsSeen(session.user_id, (track || []).slice(0, shownCount));
 
-  const expired = await query(
-    `UPDATE game_sessions
-     SET status = 'expired', completed_at = NOW()
-     WHERE id = $1 AND status = 'active'${userClause}
-     RETURNING id, user_id, stake_amount`,
-    params
-  );
-  const row = expired.rows[0];
+  const client = await getClient();
+  let row;
+  try {
+    await client.query('BEGIN');
+    row = await expireInTx(client, sessionId, userId, { timedOut });
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
   if (!row) return null;
 
-  const zohoService = require('./zohoService');
-  zohoService.syncGameSettlement(row.user_id, {
-    gameId: row.id,
-    stake: parseFloat(row.stake_amount),
-    grossPayout: 0,
-    taxAmount: 0,
-    netAmount: 0,
-    reason: 'forfeit',
-  }).catch(err => console.error('Failed to sync forfeited stake to Zoho Books:', err));
-
+  afterExpiry(row);
   return row;
 }
 

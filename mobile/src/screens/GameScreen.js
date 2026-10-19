@@ -167,14 +167,16 @@ export default function GameScreen({ navigation, route }) {
   }, []);
 
   // When timer reaches 0: mark session expired on server, then navigate
+  // If an answer is still in flight when the clock hits 0, let it finish first
+  // (the server allows a grace period) so a last-second 10th answer is not lost.
   useEffect(() => {
-    if (timeLeft === 0) {
-      gameEndedRef.current = true;
-      abandonSession(sessionId).catch(() => {}).finally(() => {
-        navigation.replace('Result', { sessionId, expired: true });
-      });
-    }
-  }, [timeLeft]);
+    if (timeLeft !== 0 || gameEndedRef.current) return;
+    if (isSubmitting) return; // re-runs when the submit settles
+    gameEndedRef.current = true;
+    abandonSession(sessionId, 'timeout').catch(() => {}).finally(() => {
+      navigation.replace('Result', { sessionId, expired: true });
+    });
+  }, [timeLeft, isSubmitting]);
 
   function slideInNext() {
     slideAnim.setValue(width);

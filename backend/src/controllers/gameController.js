@@ -106,11 +106,14 @@ async function getResult(req, res, next) {
 async function abandonSession(req, res, next) {
   try {
     const { sessionId } = req.params;
-    const session = await expireSession(sessionId, req.user.userId);
+    // reason === 'timeout' means the game clock ran out: the score reached so far is settled
+    // (a 9/10 still pays). Any other abandon (e.g. kiosk close) forfeits the stake.
+    const timedOut = req.body?.reason === 'timeout';
+    const session = await expireSession(sessionId, req.user.userId, { timedOut });
     if (!session)
       throw new AppError('No active session found', 404, 'NOT_FOUND');
 
-    // Stake is forfeited — already deducted at session creation, no refund
+    // Unsettled stake is forfeited — already deducted at session creation, no refund
     res.json({ success: true, data: { message: 'Session abandoned', sessionId } });
   } catch (err) { next(err); }
 }
