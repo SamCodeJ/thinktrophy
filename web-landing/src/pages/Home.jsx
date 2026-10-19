@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Trophy, Download, Zap, Shield, Users, Star,
   ChevronRight, Check, BookOpen, Brain, Globe2,
   Cpu, Music, FlaskConical, Landmark, Heart,
-  ArrowRight, Smartphone, Play, Quote,
+  ArrowRight, Smartphone, Play, Quote, ChevronLeft,
 } from 'lucide-react';
 import { fetchPublicTestimonials } from '../api/testimonials';
 
@@ -115,6 +115,159 @@ function TestimonialStars({ value }) {
       {Array.from({ length: value }, (_, i) => (
         <Star key={i} size={14} className="text-yellow-400 fill-yellow-400" />
       ))}
+    </div>
+  );
+}
+
+/** Cards per slide: 1 (mobile) · 2 (sm) · 3 (lg) · 4 (xl). */
+function useTestimonialsPerSlide() {
+  const calc = () => {
+    if (typeof window === 'undefined') return 3;
+    const w = window.innerWidth;
+    if (w >= 1280) return 4;
+    if (w >= 1024) return 3;
+    if (w >= 640) return 2;
+    return 1;
+  };
+  const [perSlide, setPerSlide] = useState(calc);
+  useEffect(() => {
+    const onResize = () => setPerSlide(calc());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return perSlide;
+}
+
+const SLIDE_INTERVAL_MS = 7000;
+
+function TestimonialSlider({ items }) {
+  const perSlide = useTestimonialsPerSlide();
+  const [page, setPage] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const touchStartX = useRef(null);
+
+  const pages = useMemo(() => {
+    const out = [];
+    for (let i = 0; i < items.length; i += perSlide) out.push(items.slice(i, i + perSlide));
+    return out;
+  }, [items, perSlide]);
+
+  const pageCount = pages.length;
+  const current = Math.min(page, pageCount - 1);
+
+  // Keep the page valid when the layout (cards per slide) changes.
+  useEffect(() => {
+    if (page > pageCount - 1) setPage(Math.max(0, pageCount - 1));
+  }, [page, pageCount]);
+
+  const go = useCallback(
+    (n) => setPage(((n % pageCount) + pageCount) % pageCount),
+    [pageCount],
+  );
+
+  // Autoplay (only when there is more than one slide; pauses on hover/focus/touch).
+  useEffect(() => {
+    if (pageCount <= 1 || paused) return undefined;
+    const t = setInterval(() => setPage(p => (p + 1) % pageCount), SLIDE_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, [pageCount, paused]);
+
+  const onTouchStart = (e) => {
+    setPaused(true);
+    touchStartX.current = e.touches[0].clientX;
+  };
+  const onTouchEnd = (e) => {
+    if (touchStartX.current != null) {
+      const dx = e.changedTouches[0].clientX - touchStartX.current;
+      if (Math.abs(dx) > 50) go(current + (dx < 0 ? 1 : -1));
+    }
+    touchStartX.current = null;
+    setPaused(false);
+  };
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
+      role="region"
+      aria-roledescription="carousel"
+      aria-label="Player reviews"
+    >
+      <div className="overflow-hidden" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        <div
+          className="flex transition-transform duration-500 ease-out"
+          style={{ transform: `translateX(-${current * 100}%)` }}
+        >
+          {pages.map((group, idx) => (
+            <div
+              key={idx}
+              className="w-full flex-none grid gap-6 px-1 py-1"
+              style={{ gridTemplateColumns: `repeat(${perSlide}, minmax(0, 1fr))` }}
+              aria-hidden={idx !== current}
+            >
+              {group.map(t => (
+                <article
+                  key={t.id}
+                  className="card p-6 flex flex-col border-slate-100 dark:border-white/5"
+                >
+                  <Quote size={22} className="text-brand-blue/40 dark:text-brand-teal/50 flex-shrink-0 mb-3" />
+                  <p className="text-slate-600 dark:text-white/70 leading-relaxed flex-1 text-sm">
+                    “{t.quote}”
+                  </p>
+                  <TestimonialStars value={t.rating} />
+                  <footer className="mt-5 pt-4 border-t border-slate-100 dark:border-white/10">
+                    <p className="font-bold text-brand-dark dark:text-white">{t.author_name}</p>
+                    {t.author_title && (
+                      <p className="text-xs text-slate-400 dark:text-white/40 mt-0.5">{t.author_title}</p>
+                    )}
+                  </footer>
+                </article>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {pageCount > 1 && (
+        <>
+          <button
+            type="button"
+            onClick={() => go(current - 1)}
+            aria-label="Previous reviews"
+            className="hidden md:flex absolute top-1/2 -translate-y-1/2 -left-4 lg:-left-6 w-10 h-10 items-center justify-center rounded-full bg-white dark:bg-brand-card shadow-md border border-slate-100 dark:border-white/10 text-slate-600 dark:text-white hover:text-brand-blue transition-colors"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <button
+            type="button"
+            onClick={() => go(current + 1)}
+            aria-label="Next reviews"
+            className="hidden md:flex absolute top-1/2 -translate-y-1/2 -right-4 lg:-right-6 w-10 h-10 items-center justify-center rounded-full bg-white dark:bg-brand-card shadow-md border border-slate-100 dark:border-white/10 text-slate-600 dark:text-white hover:text-brand-blue transition-colors"
+          >
+            <ChevronRight size={20} />
+          </button>
+
+          <div className="flex justify-center gap-2 mt-8">
+            {pages.map((_, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => go(idx)}
+                aria-label={`Go to slide ${idx + 1}`}
+                aria-current={idx === current}
+                className={`h-2 rounded-full transition-all ${
+                  idx === current
+                    ? 'w-6 bg-brand-blue dark:bg-brand-teal'
+                    : 'w-2 bg-slate-300 dark:bg-white/20 hover:bg-slate-400'
+                }`}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -405,26 +558,7 @@ export default function Home() {
               Player reviews will appear here once they are added in the admin portal.
             </p>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {testimonials.map(t => (
-                <article
-                  key={t.id}
-                  className="card p-6 flex flex-col border-slate-100 dark:border-white/5 hover:shadow-md dark:hover:border-white/10 transition-all"
-                >
-                  <Quote size={22} className="text-brand-blue/40 dark:text-brand-teal/50 flex-shrink-0 mb-3" />
-                  <p className="text-slate-600 dark:text-white/70 leading-relaxed flex-1 text-sm sm:text-base">
-                    “{t.quote}”
-                  </p>
-                  <TestimonialStars value={t.rating} />
-                  <footer className="mt-5 pt-4 border-t border-slate-100 dark:border-white/10">
-                    <p className="font-bold text-brand-dark dark:text-white">{t.author_name}</p>
-                    {t.author_title && (
-                      <p className="text-xs text-slate-400 dark:text-white/40 mt-0.5">{t.author_title}</p>
-                    )}
-                  </footer>
-                </article>
-              ))}
-            </div>
+            <TestimonialSlider items={testimonials} />
           )}
         </div>
       </section>
