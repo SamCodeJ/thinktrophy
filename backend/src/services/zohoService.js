@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { settlementLegs } = require('./accounting');
+const { enqueueOutbound } = require('./outboundQueue');
 
 let tokenCache = {
   token: null,
@@ -141,7 +142,26 @@ async function publishJournal(date, referenceNumber, notes, lineItems) {
   return res;
 }
 
-async function syncDeposit(userId, amount, transactionId, extras = {}) {
+function zohoConfigured() {
+  return Boolean(
+    process.env.ZOHO_CLIENT_ID &&
+    process.env.ZOHO_REFRESH_TOKEN &&
+    process.env.ZOHO_ORG_ID
+  );
+}
+
+async function enqueueZoho(jobName, payload, idempotencyKey, priority = 40) {
+  if (!zohoConfigured()) return null;
+  return enqueueOutbound({
+    kind: 'zoho',
+    jobName,
+    payload,
+    idempotencyKey,
+    priority,
+  });
+}
+
+async function runSyncDeposit(userId, amount, transactionId, extras = {}) {
   const bankClearing = process.env.ZOHO_ACCOUNT_BANK_CLEARING;
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
   const depositFees = process.env.ZOHO_ACCOUNT_DEPOSIT_FEES;
@@ -177,7 +197,7 @@ async function syncDeposit(userId, amount, transactionId, extras = {}) {
   );
 }
 
-async function syncStake(userId, amount, gameId) {
+async function runSyncStake(userId, amount, gameId) {
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
   const stakesHeld = process.env.ZOHO_ACCOUNT_STAKES_HELD;
 
@@ -200,7 +220,7 @@ async function syncStake(userId, amount, gameId) {
   );
 }
 
-async function syncGameSettlement(userId, {
+async function runSyncGameSettlement(userId, {
   gameId,
   stake,
   grossPayout = 0,
@@ -250,8 +270,8 @@ async function syncGameSettlement(userId, {
   );
 }
 
-async function syncPayout(userId, amount, gameId, extras = {}) {
-  return syncGameSettlement(userId, {
+async function runSyncPayout(userId, amount, gameId, extras = {}) {
+  return runSyncGameSettlement(userId, {
     gameId,
     stake: extras.stake,
     grossPayout: amount,
@@ -261,7 +281,7 @@ async function syncPayout(userId, amount, gameId, extras = {}) {
   });
 }
 
-async function syncReferralBonus(userId, amount, referralId, extras = {}) {
+async function runSyncReferralBonus(userId, amount, referralId, extras = {}) {
   const referralExpense = process.env.ZOHO_ACCOUNT_REFERRAL_EXPENSE;
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
 
@@ -292,7 +312,7 @@ async function syncReferralBonus(userId, amount, referralId, extras = {}) {
   );
 }
 
-async function syncWinTax(userId, amount, gameId, extras = {}) {
+async function runSyncWinTax(userId, amount, gameId, extras = {}) {
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
   const taxAccount = process.env.ZOHO_ACCOUNT_TAX_PAYABLE || process.env.ZOHO_ACCOUNT_WIN_TAX_INCOME;
 
@@ -326,7 +346,7 @@ async function syncWinTax(userId, amount, gameId, extras = {}) {
   });
 }
 
-async function syncWithdrawalRequest(userId, totalAmount, feeAmount, transactionId) {
+async function runSyncWithdrawalRequest(userId, totalAmount, feeAmount, transactionId) {
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
   const pendingWithdrawals = process.env.ZOHO_ACCOUNT_PENDING_WITHDRAWALS;
   const serviceFees = process.env.ZOHO_ACCOUNT_PLATFORM_SERVICE_FEES;
@@ -361,7 +381,7 @@ async function syncWithdrawalRequest(userId, totalAmount, feeAmount, transaction
   });
 }
 
-async function syncWithdrawalSuccess(userId, transferAmount, transactionId) {
+async function runSyncWithdrawalSuccess(userId, transferAmount, transactionId) {
   const pendingWithdrawals = process.env.ZOHO_ACCOUNT_PENDING_WITHDRAWALS;
   const bankClearing = process.env.ZOHO_ACCOUNT_BANK_CLEARING;
 
@@ -387,7 +407,7 @@ async function syncWithdrawalSuccess(userId, transferAmount, transactionId) {
   });
 }
 
-async function syncWithdrawalFailed(userId, totalAmount, feeAmount, transactionId) {
+async function runSyncWithdrawalFailed(userId, totalAmount, feeAmount, transactionId) {
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
   const pendingWithdrawals = process.env.ZOHO_ACCOUNT_PENDING_WITHDRAWALS;
   const serviceFees = process.env.ZOHO_ACCOUNT_PLATFORM_SERVICE_FEES;
@@ -434,7 +454,7 @@ function pushDelta(lines, accountId, amount, debitWhenPositive) {
   else pushLine(lines, accountId, debitWhenPositive ? 'credit' : 'debit', Math.abs(value));
 }
 
-async function syncPayoutCorrection(userId, {
+async function runSyncPayoutCorrection(userId, {
   gameId,
   winningsDelta = 0,
   revenueDelta = 0,
@@ -492,7 +512,7 @@ async function syncPayoutCorrection(userId, {
   );
 }
 
-async function syncRefund(userId, amount, gameId) {
+async function runSyncRefund(userId, amount, gameId) {
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
   const refundsPayable = process.env.ZOHO_ACCOUNT_REFUNDS_PAYABLE;
 
@@ -518,7 +538,7 @@ async function syncRefund(userId, amount, gameId) {
   });
 }
 
-async function syncWalletBonus(userId, amount, adminId) {
+async function runSyncWalletBonus(userId, amount, adminId) {
   const walletLiability = process.env.ZOHO_ACCOUNT_WALLET_LIABILITY;
   const walletBonuses = process.env.ZOHO_ACCOUNT_WALLET_BONUSES;
 
@@ -544,9 +564,110 @@ async function syncWalletBonus(userId, amount, adminId) {
   });
 }
 
+async function executeJob(jobName, payload = {}) {
+  switch (jobName) {
+    case 'syncDeposit':
+      return runSyncDeposit(payload.userId, payload.amount, payload.transactionId, payload.extras || {});
+    case 'syncStake':
+      return runSyncStake(payload.userId, payload.amount, payload.gameId);
+    case 'syncGameSettlement':
+      return runSyncGameSettlement(payload.userId, payload);
+    case 'syncPayout':
+      return runSyncPayout(payload.userId, payload.amount, payload.gameId, payload.extras || {});
+    case 'syncReferralBonus':
+      return runSyncReferralBonus(payload.userId, payload.amount, payload.referralId, payload.extras || {});
+    case 'syncWinTax':
+      return runSyncWinTax(payload.userId, payload.amount, payload.gameId, payload.extras || {});
+    case 'syncWithdrawalRequest':
+      return runSyncWithdrawalRequest(payload.userId, payload.totalAmount, payload.feeAmount, payload.transactionId);
+    case 'syncWithdrawalSuccess':
+      return runSyncWithdrawalSuccess(payload.userId, payload.transferAmount, payload.transactionId);
+    case 'syncWithdrawalFailed':
+      return runSyncWithdrawalFailed(payload.userId, payload.totalAmount, payload.feeAmount, payload.transactionId);
+    case 'syncPayoutCorrection':
+      return runSyncPayoutCorrection(payload.userId, payload);
+    case 'syncRefund':
+      return runSyncRefund(payload.userId, payload.amount, payload.gameId);
+    case 'syncWalletBonus':
+      return runSyncWalletBonus(payload.userId, payload.amount, payload.adminId);
+    default:
+      throw new Error(`Unknown Zoho job: ${jobName}`);
+  }
+}
+
+function syncDeposit(userId, amount, transactionId, extras = {}) {
+  return enqueueZoho('syncDeposit', { userId, amount, transactionId, extras }, `DEP-${transactionId}`);
+}
+
+function syncStake(userId, amount, gameId) {
+  return enqueueZoho('syncStake', { userId, amount, gameId }, gameId);
+}
+
+function syncGameSettlement(userId, opts = {}) {
+  return enqueueZoho('syncGameSettlement', { userId, ...opts }, `PAY-${opts.gameId}`);
+}
+
+function syncPayout(userId, amount, gameId, extras = {}) {
+  return enqueueZoho('syncPayout', { userId, amount, gameId, extras }, `PAY-${gameId}`);
+}
+
+function syncReferralBonus(userId, amount, referralId, extras = {}) {
+  const prefix = extras?.reversal ? 'REF-REV' : 'REF';
+  return enqueueZoho(
+    'syncReferralBonus',
+    { userId, amount, referralId, extras },
+    `${prefix}-${referralId}`
+  );
+}
+
+function syncWinTax(userId, amount, gameId, extras = {}) {
+  return enqueueZoho('syncWinTax', { userId, amount, gameId, extras }, `TAX-${gameId}`);
+}
+
+function syncWithdrawalRequest(userId, totalAmount, feeAmount, transactionId) {
+  return enqueueZoho(
+    'syncWithdrawalRequest',
+    { userId, totalAmount, feeAmount, transactionId },
+    `WREQ-${transactionId}`
+  );
+}
+
+function syncWithdrawalSuccess(userId, transferAmount, transactionId) {
+  return enqueueZoho(
+    'syncWithdrawalSuccess',
+    { userId, transferAmount, transactionId },
+    `WTH-${transactionId}`
+  );
+}
+
+function syncWithdrawalFailed(userId, totalAmount, feeAmount, transactionId) {
+  return enqueueZoho(
+    'syncWithdrawalFailed',
+    { userId, totalAmount, feeAmount, transactionId },
+    `WFAIL-${transactionId}`
+  );
+}
+
+function syncPayoutCorrection(userId, opts = {}) {
+  return enqueueZoho(
+    'syncPayoutCorrection',
+    { userId, ...opts },
+    `PAY-CORR-${opts.gameId}-${Date.now()}`
+  );
+}
+
+function syncRefund(userId, amount, gameId) {
+  return enqueueZoho('syncRefund', { userId, amount, gameId }, `RFND-${gameId}`);
+}
+
+function syncWalletBonus(userId, amount, adminId) {
+  return enqueueZoho('syncWalletBonus', { userId, amount, adminId }, `BNS-${userId}-${adminId}-${Date.now()}`);
+}
+
 module.exports = {
   getAccessToken,
   createJournalEntry,
+  executeJob,
   syncDeposit,
   syncStake,
   syncGameSettlement,
@@ -558,5 +679,5 @@ module.exports = {
   syncWithdrawalSuccess,
   syncWithdrawalFailed,
   syncRefund,
-  syncWalletBonus
+  syncWalletBonus,
 };

@@ -65,6 +65,10 @@ router.put('/settings',                 requireModeratorOrAbove, validate(settin
 // Webhooks
 router.get('/webhooks',                 requireModeratorOrAbove, ctrl.getWebhookLogs);
 
+// Outbound Zoho / email delivery
+router.get('/outbound-jobs',            requireModeratorOrAbove, ctrl.getOutboundJobs);
+router.post('/outbound-jobs/:id/retry', requireModeratorOrAbove, ctrl.retryOutboundJob);
+
 // Logs
 router.get('/logs',                     ctrl.getAdminLogs);
 

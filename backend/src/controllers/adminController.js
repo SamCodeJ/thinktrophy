@@ -3,6 +3,7 @@ const { AppError } = require('../middleware/errorHandler');
 const cache = require('../utils/cache');
 const mammoth = require('mammoth');
 const { logAdminAction } = require('../utils/logger');
+const { listOutboundJobs, requeueJob } = require('../services/outboundQueue');
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────
 async function getDashboardStats(req, res, next) {
@@ -1151,6 +1152,42 @@ async function getWebhookLogs(req, res, next) {
   } catch (err) { next(err); }
 }
 
+function redactOutboundPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  const copy = { ...payload };
+  if (copy.token) copy.token = '[redacted]';
+  if (copy.otp) copy.otp = '[redacted]';
+  return copy;
+}
+
+async function getOutboundJobs(req, res, next) {
+  try {
+    const { kind, status, page = 1, limit = 50 } = req.query;
+    const result = await listOutboundJobs({ kind, status, page, limit });
+    res.json({
+      success: true,
+      data: result.rows.map((row) => ({ ...row, payload: redactOutboundPayload(row.payload) })),
+      total: result.total,
+      summary: result.summary,
+    });
+  } catch (err) { next(err); }
+}
+
+async function retryOutboundJob(req, res, next) {
+  try {
+    const row = await requeueJob(req.params.id);
+    if (!row) throw new AppError('Job not found or cannot be retried', 404, 'NOT_FOUND');
+    await logAdminAction({
+      adminId: req.admin.adminId,
+      action: 'retry_outbound_job',
+      entity: 'outbound_job',
+      entityId: row.id,
+      ipAddress: req.ip,
+    });
+    res.json({ success: true, data: { id: row.id, status: 'pending' } });
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   getDashboardStats, getStatistics,
   listQuestions, createQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions, bulkDeleteQuestions,
@@ -1160,5 +1197,5 @@ module.exports = {
   getPublicTestimonials, listTestimonials, createTestimonial, updateTestimonial, deleteTestimonial,
   getSettings, updateSettings, getPublicSettings,
   getAdminLogs, listAdmins, createAdmin, updateAdminRole,
-  getWebhookLogs,
+  getWebhookLogs, getOutboundJobs, retryOutboundJob,
 };

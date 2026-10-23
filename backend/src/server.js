@@ -93,6 +93,11 @@ const server = app.listen(PORT, () => {
   console.log(`   Health: http://localhost:${PORT}/health\n`);
 });
 
+if (process.env.NODE_ENV !== 'test') {
+  const { startOutboundWorker } = require('./workers/outboundWorker');
+  startOutboundWorker();
+}
+
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 server.requestTimeout = 30000;

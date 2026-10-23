@@ -64,6 +64,8 @@ export const updateSettings = (data) => client.put('/api/admin/settings', data);
 // Logs
 export const getAdminLogs = (params) => client.get('/api/admin/logs', { params });
 export const getWebhookLogs = () => client.get('/api/admin/webhooks');
+export const getOutboundJobs = (params) => client.get('/api/admin/outbound-jobs', { params });
+export const retryOutboundJob = (id) => client.post(`/api/admin/outbound-jobs/${id}/retry`);
 
 // Admins
 export const getAdmins = () => client.get('/api/admin/admins');

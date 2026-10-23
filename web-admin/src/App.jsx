@@ -14,6 +14,7 @@ import Settings from './pages/Settings';
 import Statistics from './pages/Statistics';
 import Logs from './pages/Logs';
 import WebhookLogs from './pages/WebhookLogs';
+import OutboundJobs from './pages/OutboundJobs';
 
 import Admins from './pages/Admins';
 import Testimonials from './pages/Testimonials';
@@ -43,6 +44,7 @@ function ProtectedRoutes() {
         <Route path="statistics"         element={<Statistics />} />
         <Route path="logs"               element={<Logs />} />
         <Route path="webhooks"           element={<WebhookLogs />} />
+        <Route path="delivery"           element={<OutboundJobs />} />
         <Route path="admins"             element={<RequireRole roles={['super_admin']}><Admins /></RequireRole>} />
       </Route>
     </Routes>

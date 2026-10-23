@@ -277,6 +277,38 @@ CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email));
 CREATE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_users_verification_token_hash ON users(verification_token_hash);
 CREATE INDEX IF NOT EXISTS idx_user_seen_questions_question ON user_seen_questions(question_id);
+
+-- ─────────────────────────────────────────────────
+--  OUTBOUND JOBS (Zoho Books + email, retried off the game path)
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS outbound_jobs (
+  id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind             VARCHAR(20)  NOT NULL CHECK (kind IN ('zoho', 'email')),
+  job_name         VARCHAR(80)  NOT NULL,
+  payload          JSONB        NOT NULL,
+  status           VARCHAR(20)  NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending', 'processing', 'sent', 'failed')),
+  priority         SMALLINT     NOT NULL DEFAULT 50,
+  attempts         INTEGER      NOT NULL DEFAULT 0,
+  max_attempts     INTEGER      NOT NULL DEFAULT 8,
+  last_error       TEXT,
+  idempotency_key  TEXT,
+  available_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  processed_at     TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outbound_jobs_idempotency
+  ON outbound_jobs (kind, job_name, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_outbound_jobs_ready
+  ON outbound_jobs (priority, available_at)
+  WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_outbound_jobs_kind_status
+  ON outbound_jobs (kind, status, created_at DESC);
 `;
 
 async function migrate() {

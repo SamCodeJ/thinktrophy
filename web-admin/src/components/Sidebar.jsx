@@ -16,6 +16,7 @@ const navItems = [
   { to: '/statistics',    icon: BarChart2,       label: 'Statistics' },
   { to: '/logs',          icon: FileText,        label: 'Logs' },
   { to: '/webhooks',      icon: FileText,        label: 'Webhooks' },
+  { to: '/delivery',      icon: FileText,        label: 'Delivery' },
   { to: '/admins',        icon: Shield,          label: 'Admins' },
   { to: '/settings',      icon: Settings,        label: 'Settings' },
 ];
