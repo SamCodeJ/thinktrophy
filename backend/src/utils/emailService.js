@@ -36,24 +36,50 @@ function mailFrom() {
   return { name: 'ThinkTrophy', address };
 }
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
-  secure: process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  pool: true,
-  maxConnections: 3,
-  maxMessages: 50,
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 15000,
-  tls: {
-    rejectUnauthorized: process.env.NODE_ENV === 'production',
-  },
-});
+function smtpPort() {
+  return parseInt(process.env.SMTP_PORT || '587', 10);
+}
+
+// Port 465 is implicit TLS. Port 587 (and most others) speak plain SMTP first, then STARTTLS.
+// Honoring SMTP_SECURE=true on 587 produces OpenSSL "wrong version number".
+function smtpUsesImplicitTls(port = smtpPort()) {
+  const implicit = port === 465;
+  const explicit = String(process.env.SMTP_SECURE || '').toLowerCase();
+  if (explicit === 'true' && !implicit) {
+    console.warn(`SMTP_SECURE=true is ignored on port ${port}; using STARTTLS`);
+  } else if (explicit === 'false' && implicit) {
+    console.warn(`SMTP_SECURE=false is ignored on port ${port}; using implicit TLS`);
+  }
+  return implicit;
+}
+
+function buildSmtpTransportOptions({ pool = false } = {}) {
+  const port = smtpPort();
+  const secure = smtpUsesImplicitTls(port);
+  return {
+    host: process.env.SMTP_HOST,
+    port,
+    secure,
+    requireTLS: !secure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+    ...(pool ? {
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 50,
+    } : {}),
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
+    tls: {
+      rejectUnauthorized: process.env.NODE_ENV === 'production',
+    },
+  };
+}
+
+const transporter = nodemailer.createTransport(buildSmtpTransportOptions({ pool: true }));
 
 function emailIdempotency(to, subject, extra) {
   return crypto.createHash('sha256').update(`${to}|${subject}|${extra || ''}`).digest('hex').slice(0, 40);
@@ -246,4 +272,5 @@ module.exports = {
   sendPasswordResetEmail,
   sendActionEmail,
   executeEmailJob,
+  buildSmtpTransportOptions,
 };

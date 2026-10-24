@@ -1,27 +1,17 @@
 require('dotenv').config();
-const { sendActionEmail } = require('./src/utils/emailService');
+const nodemailer = require('nodemailer');
+const { buildSmtpTransportOptions } = require('./src/utils/emailService');
 
 async function testEmail() {
   try {
+    const options = buildSmtpTransportOptions();
     console.log('Testing email configuration...');
     console.log('SMTP_HOST:', process.env.SMTP_HOST ? 'Set' : 'Not Set');
-    console.log('SMTP_PORT:', process.env.SMTP_PORT ? 'Set' : 'Not Set');
+    console.log('SMTP_PORT:', options.port);
+    console.log('SMTP_SECURE (implicit TLS):', options.secure);
     console.log('SMTP_USER:', process.env.SMTP_USER ? 'Set' : 'Not Set');
-    
-    // We can try to send an email to a dummy address or just check the transporter connection
-    const nodemailer = require('nodemailer');
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-    });
+
+    const transporter = nodemailer.createTransport(options);
 
     await transporter.verify();
     console.log('SMTP connection verified successfully!');
